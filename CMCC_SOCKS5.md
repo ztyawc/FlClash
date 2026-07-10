@@ -22,6 +22,19 @@ proxies:
 When `cmcc-auth-method` is omitted, the outbound remains a standard SOCKS5
 proxy. Credentials are never built into the core.
 
+## Kernel releases
+
+The [`Release CMCC kernels`](https://github.com/ztyawc/mihomo/actions/workflows/release-cmcc-kernels.yml)
+workflow publishes only these two custom kernel assets:
+
+- `mihomo-windows-amd64-v1-cmcc.zip` for Windows 10
+- `mihomo-android-arm64-v8-cmcc.gz` for Android
+
+The latest pair is available from the repository's
+[`Releases`](https://github.com/ztyawc/mihomo/releases) page. Each release body
+contains the embedded version, source commit, and SHA-256 checksums. GitHub also
+shows its automatically generated source archives; those are not kernel builds.
+
 ## Upstream maintenance
 
 MetaCubeX develops and releases mihomo from its `Alpha` branch. This fork keeps
@@ -33,7 +46,8 @@ upstream `Alpha`. The `Sync upstream Alpha` workflow
 checks for updates every day, merges them, runs the full test suite plus
 Windows amd64-v1 and Android arm64-v8 builds, and pushes only when every check
 succeeds. Merge conflicts or test/build failures stop the workflow without
-modifying the remote branch.
+modifying the remote branch. After a successful synchronization, the release
+workflow builds and publishes the new two-kernel pair from the latest `main`.
 
 Manual synchronization uses the same safe merge flow:
 

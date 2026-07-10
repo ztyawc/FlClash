@@ -1,0 +1,329 @@
+name: Release CMCC kernels
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "README.md"
+      - ".github/ISSUE_TEMPLATE/**"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and replace the release for the current main commit
+        required: false
+        default: false
+        type: boolean
+  workflow_run:
+    workflows:
+      - Sync upstream Alpha
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-cmcc-main
+  cancel-in-progress: false
+
+env:
+  MAINTENANCE_BRANCH: main
+  RELEASE_PREFIX: cmcc-alpha-
+
+jobs:
+  prepare:
+    if: >-
+      github.repository != 'MetaCubeX/mihomo' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    outputs:
+      build_time: ${{ steps.metadata.outputs.build_time }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      short_sha: ${{ steps.metadata.outputs.short_sha }}
+      should_build: ${{ steps.metadata.outputs.should_build }}
+      target_sha: ${{ steps.metadata.outputs.target_sha }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Check out the latest maintenance branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ env.MAINTENANCE_BRANCH }}
+
+      - name: Determine release metadata
+        id: metadata
+        shell: bash
+        env:
+          FORCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          target_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          base_version="$(git describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || echo v0.0.0)"
+          version="${base_version}-cmcc.${short_sha}"
+          release_tag="${RELEASE_PREFIX}${short_sha}"
+          build_time="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          should_build=true
+
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            asset_names="$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' | sort | paste -sd ' ' -)"
+            expected_names="mihomo-android-arm64-v8-cmcc.gz mihomo-windows-amd64-v1-cmcc.zip"
+            cmcc_release_count="$(
+              gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq '.[].tag_name' |
+                awk -v prefix="$RELEASE_PREFIX" \
+                  'index($0, prefix) == 1 { count++ } END { print count + 0 }'
+            )"
+            if [[ "$asset_names" == "$expected_names" &&
+              "$cmcc_release_count" == 1 && "$FORCE_RELEASE" != true ]]; then
+              should_build=false
+            fi
+          fi
+
+          {
+            echo "target_sha=$target_sha"
+            echo "short_sha=$short_sha"
+            echo "version=$version"
+            echo "release_tag=$release_tag"
+            echo "build_time=$build_time"
+            echo "should_build=$should_build"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "$should_build" == true ]]; then
+            echo "Preparing $version from $target_sha"
+          else
+            echo "$release_tag already contains both kernel assets; skipping."
+          fi
+
+  test:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.26"
+          cache: true
+
+      - name: Test the release commit
+        env:
+          GOTOOLCHAIN: local
+          SKIP_CONCURRENT_TEST: "1"
+          SKIP_INTEROP_TEST: "1"
+        run: |
+          go test ./...
+          go test -tags with_gvisor ./transport/socks5 ./adapter/outbound
+
+  build:
+    needs:
+      - prepare
+      - test
+    if: needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: windows-amd64-v1
+            goos: windows
+            goarch: amd64
+            goamd64: v1
+            cgo_enabled: "0"
+            artifact: kernel-windows-amd64-v1
+            asset: mihomo-windows-amd64-v1-cmcc.zip
+          - name: android-arm64-v8
+            goos: android
+            goarch: arm64
+            goamd64: ""
+            cgo_enabled: "1"
+            artifact: kernel-android-arm64-v8
+            asset: mihomo-android-arm64-v8-cmcc.gz
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.target_sha }}
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.26"
+          cache: true
+
+      - name: Set up Android NDK
+        if: matrix.target.goos == 'android'
+        id: setup-ndk
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779
+        with:
+          ndk-version: r29-beta1
+
+      - name: Build and package ${{ matrix.target.name }}
+        shell: bash
+        env:
+          BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
+          CGO_ENABLED: ${{ matrix.target.cgo_enabled }}
+          GOAMD64: ${{ matrix.target.goamd64 }}
+          GOARCH: ${{ matrix.target.goarch }}
+          GOOS: ${{ matrix.target.goos }}
+          GOTOOLCHAIN: local
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          cp -f /etc/ssl/certs/ca-certificates.crt component/ca/ca-certificates.crt
+          output_dir="$RUNNER_TEMP/cmcc-kernel"
+          mkdir -p "$output_dir"
+
+          ldflags="-X github.com/metacubex/mihomo/constant.Version=${VERSION}"
+          ldflags+=" -X github.com/metacubex/mihomo/constant.BuildTime=${BUILD_TIME}"
+          ldflags+=" -w -s -buildid="
+
+          if [[ "$GOOS" == windows ]]; then
+            binary="$output_dir/mihomo-windows-amd64-v1.exe"
+            go build -v -tags with_gvisor -trimpath \
+              -ldflags "-extldflags --static ${ldflags}" \
+              -o "$binary" .
+            (
+              cd "$output_dir"
+              zip -9 "${{ matrix.target.asset }}" "$(basename "$binary")"
+            )
+            rm "$binary"
+          else
+            export CC="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang"
+            binary="$output_dir/mihomo-android-arm64-v8"
+            go build -v -tags with_gvisor -trimpath \
+              -ldflags "$ldflags" \
+              -o "$binary" .
+            gzip -9 -c "$binary" > "$output_dir/${{ matrix.target.asset }}"
+            rm "$binary"
+          fi
+
+          test -s "$output_dir/${{ matrix.target.asset }}"
+          sha256sum "$output_dir/${{ matrix.target.asset }}"
+
+      - name: Upload ${{ matrix.target.name }} kernel
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target.artifact }}
+          path: ${{ runner.temp }}/cmcc-kernel/${{ matrix.target.asset }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  release:
+    needs:
+      - prepare
+      - build
+    if: needs.prepare.outputs.should_build == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download both kernels
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/cmcc-release
+          merge-multiple: true
+
+      - name: Publish the verified prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          release_dir="$RUNNER_TEMP/cmcc-release"
+          windows_asset="$release_dir/mihomo-windows-amd64-v1-cmcc.zip"
+          android_asset="$release_dir/mihomo-android-arm64-v8-cmcc.gz"
+          notes_file="$RUNNER_TEMP/cmcc-release-notes.md"
+
+          test -s "$windows_asset"
+          test -s "$android_asset"
+          if [[ "$(find "$release_dir" -maxdepth 1 -type f | wc -l)" -ne 2 ]]; then
+            echo "Expected exactly two kernel assets" >&2
+            find "$release_dir" -maxdepth 2 -type f -print >&2
+            exit 1
+          fi
+
+          checksums="$(
+            cd "$release_dir"
+            sha256sum "$(basename "$windows_asset")" "$(basename "$android_asset")"
+          )"
+
+          {
+            echo "基于官方 Alpha 分支构建，仅加入本仓库的 CMCC SOCKS5 支持。"
+            echo
+            echo "版本：\`$VERSION\`"
+            echo "提交：[$TARGET_SHA]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$TARGET_SHA)"
+            echo
+            echo "仅上传两个内核资产：Windows 10 amd64-v1 与 Android arm64-v8。"
+            echo
+            echo "SHA-256："
+            echo '```text'
+            echo "$checksums"
+            echo '```'
+          } > "$notes_file"
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            "$windows_asset" \
+            "$android_asset" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET_SHA" \
+            --title "CMCC Mihomo $VERSION" \
+            --notes-file "$notes_file" \
+            --prerelease \
+            --latest=false
+
+          mapfile -t uploaded_assets < <(
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[].name' | sort
+          )
+          expected_assets=(
+            mihomo-android-arm64-v8-cmcc.gz
+            mihomo-windows-amd64-v1-cmcc.zip
+          )
+          if [[ "${uploaded_assets[*]}" != "${expected_assets[*]}" ]]; then
+            echo "Unexpected release assets: ${uploaded_assets[*]}" >&2
+            exit 1
+          fi
+
+          mapfile -t old_releases < <(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[].tag_name' |
+              awk -v prefix="$RELEASE_PREFIX" 'index($0, prefix) == 1'
+          )
+          for old_release in "${old_releases[@]}"; do
+            if [[ "$old_release" != "$RELEASE_TAG" ]]; then
+              gh release delete "$old_release" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            fi
+          done
+
+          {
+            echo "Published $RELEASE_TAG with exactly two kernel assets."
+            echo
+            echo '```text'
+            echo "$checksums"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
