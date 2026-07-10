@@ -373,6 +373,7 @@ proxies: # socks5
     port: 443
     # username: username
     # password: password
+    # cmcc-auth-method: "0x80" # 私有教育加速 SOCKS5；可选 0x80 或 0x82，上行数据会 XOR 0xff
     # tls: true
     # fingerprint: xxxx # 配置指纹将实现 SSL Pining 效果, 可使用 openssl x509 -noout -fingerprint -sha256 -inform pem -in yourcert.pem 获取
     # 下面两项如果填写则开启 mTLS（需要同时填写）

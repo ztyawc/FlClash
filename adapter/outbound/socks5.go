@@ -22,6 +22,7 @@ type Socks5 struct {
 	option         *Socks5Option
 	user           string
 	pass           string
+	cmccAuthMethod byte
 	tls            bool
 	skipCertVerify bool
 	tlsConfig      *tls.Config
@@ -40,6 +41,7 @@ type Socks5Option struct {
 	Fingerprint    string `proxy:"fingerprint,omitempty"`
 	Certificate    string `proxy:"certificate,omitempty"`
 	PrivateKey     string `proxy:"private-key,omitempty"`
+	CMCCAuthMethod string `proxy:"cmcc-auth-method,omitempty"`
 }
 
 // StreamConnContext implements C.ProxyAdapter
@@ -51,6 +53,9 @@ func (ss *Socks5) StreamConnContext(ctx context.Context, c net.Conn, metadata *C
 		if err != nil {
 			return nil, fmt.Errorf("%s connect error: %w", ss.addr, err)
 		}
+	}
+	if ss.cmccAuthMethod != 0 {
+		c = socks5.NewCMCCConn(c)
 	}
 
 	var user *socks5.User
@@ -108,6 +113,9 @@ func (ss *Socks5) ListenPacketContext(ctx context.Context, metadata *C.Metadata)
 		}
 		c = cc
 	}
+	if ss.cmccAuthMethod != 0 {
+		c = socks5.NewCMCCConn(c)
+	}
 
 	var user *socks5.User
 	if ss.user != "" {
@@ -142,6 +150,9 @@ func (ss *Socks5) ListenPacketContext(ctx context.Context, metadata *C.Metadata)
 	if err != nil {
 		return
 	}
+	if ss.cmccAuthMethod != 0 {
+		pc = socks5.NewCMCCPacketConn(pc)
+	}
 
 	go func() {
 		io.Copy(io.Discard, c)
@@ -166,13 +177,26 @@ func (ss *Socks5) clientHandshakeContext(ctx context.Context, c net.Conn, addr s
 		done := N.SetupContextForConn(ctx, c)
 		defer done(&err)
 	}
+	if ss.cmccAuthMethod != 0 {
+		return socks5.ClientHandshakeCMCC(c, addr, command, user, ss.cmccAuthMethod)
+	}
 	return socks5.ClientHandshake(c, addr, command, user)
 }
 
 func NewSocks5(option Socks5Option) (*Socks5, error) {
+	cmccAuthMethod, err := parseCMCCAuthMethod(option.CMCCAuthMethod)
+	if err != nil {
+		return nil, err
+	}
+	if cmccAuthMethod != 0 {
+		user := &socks5.User{Username: option.UserName, Password: option.Password}
+		if err = validateCMCCCredentials(user); err != nil {
+			return nil, err
+		}
+	}
+
 	var tlsConfig *tls.Config
 	if option.TLS {
-		var err error
 		tlsConfig, err = ca.GetTLSConfig(ca.Option{
 			TLSConfig: &tls.Config{
 				InsecureSkipVerify: option.SkipCertVerify,
@@ -203,6 +227,7 @@ func NewSocks5(option Socks5Option) (*Socks5, error) {
 		option:         &option,
 		user:           option.UserName,
 		pass:           option.Password,
+		cmccAuthMethod: cmccAuthMethod,
 		tls:            option.TLS,
 		skipCertVerify: option.SkipCertVerify,
 		tlsConfig:      tlsConfig,
