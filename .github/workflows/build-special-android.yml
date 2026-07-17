@@ -1,0 +1,175 @@
+name: Build special Android
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        default: main
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-special-android-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: "3.44.4"
+  GO_VERSION: "1.26.4"
+
+jobs:
+  release-state:
+    if: github.repository == 'ztyawc/FlClash'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      should-build: ${{ steps.release.outputs.should-build }}
+    steps:
+      - name: Check out the requested revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Check whether a scheduled retry is needed
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)"
+          short_sha="$(git rev-parse --short=8 HEAD)"
+          tag="special-${version//+/-}-${short_sha}"
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] && \
+             gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "should-build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should-build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: release-state
+    if: needs.release-state.outputs.should-build == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the requested revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+          submodules: recursive
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28c
+          add-to-path: true
+          link-to-sdk: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run Flutter tests
+        run: flutter test --reporter expanded
+
+      - name: Build all Android ABIs
+        env:
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: dart setup.dart android -v
+
+      - name: Verify and checksum APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find dist -maxdepth 1 -type f -name '*.apk' -print | sort)
+          if [[ "${#apks[@]}" -ne 3 ]]; then
+            printf 'Expected 3 APKs, found %s\n' "${#apks[@]}"
+            printf '%s\n' "${apks[@]}"
+            exit 1
+          fi
+          sha256sum "${apks[@]}" > dist/SHA256SUMS
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlClash-special-android-${{ github.run_id }}
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Create or refresh the prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)"
+          commit_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=8 HEAD)"
+          core_sha="$(git -C core/Clash.Meta rev-parse --short=12 HEAD)"
+          tag="special-${version//+/-}-${short_sha}"
+          notes="${RUNNER_TEMP}/special-release.md"
+          {
+            printf 'FlClash（特供版）自动构建。\n\n'
+            printf -- '- 应用 ID：`com.follow.clash.dev`，可与官方版共存\n'
+            printf -- '- FlClash：`%s`\n' "$commit_sha"
+            printf -- '- mihomo 内核：`%s`\n' "$core_sha"
+            printf -- '- 签名：CI 自动生成的 debug 签名，不需要私人 keystore\n\n'
+            printf '不同构建的 debug 证书可能不同；若覆盖安装失败，请先卸载旧特供版。\n'
+          } > "$notes"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --title "FlClash 特供版 ${version}" --notes-file "$notes"
+            gh release upload "$tag" dist/*.apk dist/SHA256SUMS --clobber
+          else
+            gh release create "$tag" dist/*.apk dist/SHA256SUMS \
+              --target "$commit_sha" \
+              --title "FlClash 特供版 ${version}" \
+              --notes-file "$notes" \
+              --prerelease
+          fi
