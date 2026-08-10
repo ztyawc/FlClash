@@ -26,13 +26,6 @@ jobs:
           fetch-depth: 0
           ref: main
 
-      - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
-        with:
-          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
-          go-version: "1.26"
-          cache: true
-
       - name: Merge upstream Alpha
         id: merge
         shell: bash
@@ -46,8 +39,46 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git merge --no-edit upstream/Alpha
+
+          previous_upstream="$(git log --first-parent --merges -1 --format='%P' | awk '{print $2}')"
+          history_rewritten=false
+          if [[ -n "$previous_upstream" ]] &&
+            ! git merge-base --is-ancestor "$previous_upstream" upstream/Alpha; then
+            history_rewritten=true
+            echo "::warning title=Upstream Alpha history changed::The previously merged Alpha commit is no longer an ancestor of upstream/Alpha."
+          fi
+
+          if ! git merge --no-edit upstream/Alpha; then
+            mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
+            {
+              echo "### Upstream Alpha merge requires manual resolution"
+              echo
+              if [[ "$history_rewritten" == true ]]; then
+                echo "The Alpha branch history changed after the previous sync."
+                echo
+              fi
+              if (( ${#conflicts[@]} > 0 )); then
+                echo "Conflicting files:"
+                printf -- '- `%s`\n' "${conflicts[@]}"
+              else
+                echo "The merge failed without reporting a conflicted file. Inspect the merge log."
+              fi
+            } >> "$GITHUB_STEP_SUMMARY"
+            for file in "${conflicts[@]}"; do
+              echo "::error file=$file,title=Upstream merge conflict::Resolve this file locally and push the merge to main."
+            done
+            git merge --abort || true
+            exit 1
+          fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        if: steps.merge.outputs.changed == 'true'
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.26"
+          cache: true
 
       - name: Test the merged tree
         if: steps.merge.outputs.changed == 'true'
@@ -80,6 +111,10 @@ jobs:
             go build -tags with_gvisor -trimpath \
             -o /tmp/mihomo-sync-build/mihomo-android-arm64-v8 .
           git restore --source=HEAD -- component/ca/ca-certificates.crt
+
+      - name: Verify the tested tree stayed clean
+        if: steps.merge.outputs.changed == 'true'
+        run: git diff --exit-code
 
       - name: Push the tested merge
         if: steps.merge.outputs.changed == 'true'
