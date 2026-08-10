@@ -1,4 +1,4 @@
-//go:build !with_gvisor || no_zerotier
+//go:build no_zerotier
 
 package outbound
 
@@ -15,6 +15,7 @@ type ZeroTierOption struct {
 	StateDir          string                `proxy:"state-dir,omitempty"`
 	Planet            string                `proxy:"planet,omitempty"`
 	MTU               int                   `proxy:"mtu,omitempty"`
+	IPStack           IPStackOption         `proxy:"ip-stack,omitempty"`
 	PhysicalMTU       int                   `proxy:"physical-mtu,omitempty"`
 	UDP               bool                  `proxy:"udp,omitempty"`
 	RemoteDnsResolve  bool                  `proxy:"remote-dns-resolve,omitempty"`
@@ -36,5 +37,5 @@ type ZeroTierOrbitOption struct {
 }
 
 func NewZeroTier(ZeroTierOption) (*ZeroTier, error) {
-	return nil, fmt.Errorf("ZeroTier support is disabled by \"no_zerotier\" build tag or not include \"with_gvisor\" build tag")
+	return nil, fmt.Errorf("ZeroTier support is disabled by \"no_zerotier\" build tag")
 }

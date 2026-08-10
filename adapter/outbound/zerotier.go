@@ -1,4 +1,4 @@
-//go:build with_gvisor && !no_zerotier
+//go:build !no_zerotier
 
 package outbound
 
@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/iface"
@@ -20,7 +21,6 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
-	wireguard "github.com/metacubex/sing-wireguard"
 	M "github.com/metacubex/sing/common/metadata"
 	ZT "github.com/metacubex/zerotier-go"
 	ZTIP "github.com/metacubex/zerotier-go/iplink"
@@ -29,7 +29,14 @@ import (
 
 const (
 	zeroTierDefaultStateDir = "zerotier"
-	zeroTierFrameQueueSize  = 256
+	// zeroTierFrameQueueSize absorbs short multi-flow bursts so data frames do
+	// not crowd handshake and window-update traffic out of the single ordered
+	// bridge consumer.
+	zeroTierFrameQueueSize = 2048
+	// zeroTierFrameBatchSize amortizes runtime validation, lock acquisition,
+	// and IP-stack delivery while retaining callback order.
+	zeroTierFrameBatchSize       = 64
+	zeroTierFrameDropLogInterval = 10 * time.Second
 )
 
 var errZeroTierClosed = errors.New("ZeroTier outbound closed")
@@ -44,35 +51,52 @@ type ZeroTier struct {
 	orbits            []zeroTierOrbit
 	remoteTraceTarget ZT.Address
 	stateStore        ZT.StateStore
+	dns               []dns.NameServer
 	ctx               context.Context
 	cancel            context.CancelFunc
 
-	lifecycleMu        sync.Mutex
-	closed             bool
-	backgroundStarted  bool
-	identityRecovering bool
-	configMu           sync.Mutex
+	// Lock acquisition rules. Rows are locks already held; columns are locks to
+	// acquire next. Any lock may be acquired when no ZeroTier lock is held.
+	//
+	//   +-------------+-------------+---------+
+	//   | held / next | operationMu | stateMu |
+	//   +-------------+-------------+---------+
+	//   | operationMu |      -      |   YES   |
+	//   | stateMu     |     NO      |    -    |
+	//   +-------------+-------------+---------+
+	//
+	// Node state callbacks are serialized by zerotier-go and may run
+	// synchronously while operationMu is write-locked. Data callbacks may run
+	// concurrently. Both callback paths may take stateMu, but neither takes
+	// operationMu; recovery that needs its write lock starts in another
+	// goroutine. Control-plane operations take the write lock, while data-plane
+	// use of mutable IP-link configuration takes the read lock. stateMu is only a
+	// short-lived field lock and is never held while acquiring operationMu.
+	operationMu       sync.RWMutex
+	closed            bool
+	backgroundStarted bool
 
-	node       *ZT.Node
-	nodeCancel context.CancelFunc
-	ipLink     *ZTIP.Link
-	wire       *ZTTransport.Transport
-	frameCh    chan zeroTierInboundFrame
-	configCh   chan struct{}
+	frameCh  chan zeroTierInboundFrame
+	configCh chan struct{}
 
-	linkMu            sync.RWMutex
-	config            ZT.NetworkConfigData
-	tunDevice         wireguard.Device
-	resolver          resolver.Resolver
-	dns               []dns.NameServer
-	networkErr        error
-	stateCh           chan struct{}
-	latestConfig      ZT.NetworkConfigData
-	haveLatestConfig  bool
-	retryLatestConfig bool
-	networkRetrying   bool
-	authURL           string
-	configGeneration  uint64
+	// stateMu protects the current runtime pointer and network state below. A
+	// runtime is immutable after publication except for its private worker
+	// bookkeeping. stateMu is never held across calls into the node, IP link,
+	// device, resolver, transport, or filesystem.
+	stateMu              sync.RWMutex
+	runtime              *zeroTierRuntime
+	config               ZT.NetworkConfigData
+	tunDevice            ipStack
+	resolver             resolver.Resolver
+	networkErr           error
+	stateCh              chan struct{}
+	latestConfig         ZT.NetworkConfigData
+	haveLatestConfig     bool
+	retryLatestConfig    bool
+	networkRetrying      bool
+	authURL              string
+	loggedNetworkFailure string
+	configGeneration     uint64
 }
 
 type ZeroTierOption struct {
@@ -82,6 +106,7 @@ type ZeroTierOption struct {
 	StateDir          string                `proxy:"state-dir,omitempty"`
 	Planet            string                `proxy:"planet,omitempty"`
 	MTU               int                   `proxy:"mtu,omitempty"`
+	IPStack           IPStackOption         `proxy:"ip-stack,omitempty"`
 	PhysicalMTU       int                   `proxy:"physical-mtu,omitempty"`
 	UDP               bool                  `proxy:"udp,omitempty"`
 	RemoteDnsResolve  bool                  `proxy:"remote-dns-resolve,omitempty"`
@@ -108,8 +133,21 @@ type zeroTierOrbit struct {
 }
 
 type zeroTierInboundFrame struct {
-	node  *ZT.Node
-	frame ZT.Frame
+	runtime *zeroTierRuntime
+	frame   ZT.Frame
+}
+
+// zeroTierRuntime owns one Node generation and all background work tied to it.
+// Its lifecycle references do not change after publication; workers is used
+// only by startBackgroundTasks and close under operationMu exclusion.
+type zeroTierRuntime struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	node        *ZT.Node
+	nodeAddress ZT.Address
+	ipLink      *ZTIP.Link
+	wire        *ZTTransport.Transport
+	workers     sync.WaitGroup
 }
 
 type zeroTierStateFS struct {
@@ -198,6 +236,10 @@ func NewZeroTier(option ZeroTierOption) (*ZeroTier, error) {
 		return nil, err
 	}
 	option.TCPFallbackMode = tcpFallbackMode.String()
+	option.IPStack.normalize()
+	if err = option.IPStack.validate(); err != nil {
+		return nil, err
+	}
 	if option.TCPFallbackRelay == "" {
 		option.TCPFallbackRelay = ZTTransport.DefaultTCPFallbackRelay
 	}
@@ -309,7 +351,7 @@ func zeroTierTransportInterfaces() ([]ZTTransport.Interface, error) {
 	return result, nil
 }
 
-func (z *ZeroTier) detachStackLocked() wireguard.Device {
+func (z *ZeroTier) detachStackLocked() ipStack {
 	device := z.tunDevice
 	z.tunDevice = nil
 	z.resolver = nil
@@ -323,6 +365,7 @@ func (z *ZeroTier) resetNetworkStateLocked(networkErr error) {
 	z.retryLatestConfig = false
 	z.networkErr = networkErr
 	z.authURL = ""
+	z.loggedNetworkFailure = ""
 	z.configGeneration++
 	z.notifyStateLocked()
 }
@@ -334,28 +377,47 @@ func (z *ZeroTier) setNetworkFailureLocked(err error, authURL string, retryConfi
 	z.notifyStateLocked()
 }
 
-func (z *ZeroTier) detachRuntimeLocked() (node *ZT.Node, nodeCancel context.CancelFunc, wireTransport *ZTTransport.Transport, device wireguard.Device) {
-	node = z.node
-	nodeCancel = z.nodeCancel
-	wireTransport = z.wire
+func (z *ZeroTier) clearLoggedNetworkFailure(source *zeroTierRuntime) bool {
+	z.stateMu.Lock()
+	if z.runtime != source {
+		z.stateMu.Unlock()
+		return false
+	}
+	z.loggedNetworkFailure = ""
+	z.stateMu.Unlock()
+	return true
+}
+
+func (z *ZeroTier) detachRuntimeLocked() (runtime *zeroTierRuntime, device ipStack) {
+	runtime = z.runtime
 	device = z.detachStackLocked()
-	z.node = nil
-	z.nodeCancel = nil
-	z.ipLink = nil
-	z.wire = nil
+	z.runtime = nil
 	return
 }
 
-func closeZeroTierRuntime(node *ZT.Node, nodeCancel context.CancelFunc, wireTransport *ZTTransport.Transport, device wireguard.Device) error {
-	if nodeCancel != nil {
-		nodeCancel()
-	}
-	if wireTransport != nil {
-		_ = wireTransport.Close()
-	}
-	if node != nil {
-		_ = node.Close()
-	}
+// startBackgroundTasks starts the workers owned by this runtime. The caller
+// holds operationMu, so the runtime cannot be detached until Add completes.
+func (r *zeroTierRuntime) startBackgroundTasks() {
+	r.workers.Add(2)
+	go func() {
+		defer r.workers.Done()
+		r.node.RunBackgroundTasks(r.ctx)
+	}()
+	go func() {
+		defer r.workers.Done()
+		r.ipLink.RunBackgroundTasks(r.ctx)
+	}()
+}
+
+// close stops one retired runtime before its identity or persistent state can
+// be reused. Physical receive workers stop before the Node and its background
+// tasks, so no transport callback can race Node.Close.
+func (r *zeroTierRuntime) close(device ipStack) error {
+	r.cancel()
+	_ = r.wire.Close()
+	r.wire.Wait()
+	r.workers.Wait()
+	_ = r.node.Close()
 	if device != nil {
 		return device.Close()
 	}
@@ -363,14 +425,18 @@ func closeZeroTierRuntime(node *ZT.Node, nodeCancel context.CancelFunc, wireTran
 }
 
 func (z *ZeroTier) start() error {
-	z.lifecycleMu.Lock()
-	defer z.lifecycleMu.Unlock()
-	if z.closed {
+	z.operationMu.Lock()
+	defer z.operationMu.Unlock()
+	return z.startLocked()
+}
+
+func (z *ZeroTier) startLocked() error {
+	if z.closed || z.ctx.Err() != nil {
 		return errZeroTierClosed
 	}
-	z.linkMu.RLock()
-	started := z.node != nil
-	z.linkMu.RUnlock()
+	z.stateMu.RLock()
+	started := z.runtime != nil
+	z.stateMu.RUnlock()
 	if started {
 		return nil
 	}
@@ -385,13 +451,18 @@ func (z *ZeroTier) start() error {
 	if err != nil {
 		return err
 	}
-	var node *ZT.Node
-	node, err = ZT.NewNode(ZT.NodeConfig{
+	runtime := &zeroTierRuntime{}
+	var frameDrops struct {
+		sync.Mutex
+		count uint64
+		last  time.Time
+	}
+	node, err := ZT.NewNode(ZT.NodeConfig{
 		Store:  z.stateStore,
 		Sender: wireTransport,
 		Planet: z.planet,
 		OnEvent: func(event ZT.Event) {
-			z.handleNodeEvent(node, event)
+			z.handleNodeEvent(runtime, event)
 		},
 		PhysicalMTU:       z.option.PhysicalMTU,
 		RemoteTraceTarget: z.remoteTraceTarget,
@@ -399,13 +470,25 @@ func (z *ZeroTier) start() error {
 		LowBandwidth:      z.option.LowBandwidth,
 		EncryptedHello:    z.option.EncryptedHello,
 		OnNetworkConfig: func(config ZT.NetworkConfigData) {
-			z.enqueueNetworkConfig(node, config)
+			z.enqueueNetworkConfig(runtime, config)
 		},
 		OnFrame: func(frame ZT.Frame) {
 			select {
-			case z.frameCh <- zeroTierInboundFrame{node: node, frame: frame}:
+			case z.frameCh <- zeroTierInboundFrame{runtime: runtime, frame: frame}:
 			default:
-				log.Warnln("[ZeroTier](%s) dropping inbound frame because the bridge queue is full", z.Name())
+				now := time.Now()
+				frameDrops.Lock()
+				frameDrops.count++
+				var dropped uint64
+				if frameDrops.last.IsZero() || now.Sub(frameDrops.last) >= zeroTierFrameDropLogInterval {
+					dropped = frameDrops.count
+					frameDrops.count = 0
+					frameDrops.last = now
+				}
+				frameDrops.Unlock()
+				if dropped != 0 {
+					log.Warnln("[ZeroTier](%s) dropped %d inbound frames because the bridge queue is full", z.Name(), dropped)
+				}
 			}
 		},
 		DirectPaths: wireTransport.DirectPaths,
@@ -420,28 +503,27 @@ func (z *ZeroTier) start() error {
 		_ = node.Close()
 		return err
 	}
-	nodeCtx, nodeCancel := context.WithCancel(z.ctx)
-	z.linkMu.Lock()
-	z.node = node
-	z.nodeCancel = nodeCancel
-	z.ipLink = ipLink
-	z.wire = wireTransport
+	runtimeCtx, runtimeCancel := context.WithCancel(z.ctx)
+	runtime.ctx = runtimeCtx
+	runtime.cancel = runtimeCancel
+	runtime.node = node
+	runtime.nodeAddress = node.Address()
+	runtime.ipLink = ipLink
+	runtime.wire = wireTransport
+	z.stateMu.Lock()
+	z.runtime = runtime
 	z.resetNetworkStateLocked(nil)
-	z.linkMu.Unlock()
+	z.stateMu.Unlock()
 	cleanup := func(startErr error) error {
-		nodeCancel()
-		z.linkMu.Lock()
-		if z.node == node {
-			z.node = nil
-			z.nodeCancel = nil
-			z.ipLink = nil
-			z.wire = nil
+		z.stateMu.Lock()
+		if z.runtime == runtime {
+			z.runtime = nil
 		}
-		z.linkMu.Unlock()
-		_ = closeZeroTierRuntime(node, nil, wireTransport, nil)
+		z.stateMu.Unlock()
+		_ = runtime.close(nil)
 		return startErr
 	}
-	if err = wireTransport.Start(nodeCtx, node); err != nil {
+	if err = wireTransport.Start(runtimeCtx, node); err != nil {
 		return cleanup(err)
 	}
 	for _, orbit := range z.orbits {
@@ -457,25 +539,26 @@ func (z *ZeroTier) start() error {
 		go z.runNetworkConfig()
 		go z.runInboundFrames()
 	}
-	go node.RunBackgroundTasks(nodeCtx)
-	go ipLink.RunBackgroundTasks(nodeCtx)
+	runtime.startBackgroundTasks()
 	return nil
 }
 
-func (z *ZeroTier) enqueueNetworkConfig(source *ZT.Node, config ZT.NetworkConfigData) {
-	z.linkMu.Lock()
-	if z.ctx.Err() != nil || source == nil || z.node != source {
-		z.linkMu.Unlock()
+func (z *ZeroTier) enqueueNetworkConfig(source *zeroTierRuntime, config ZT.NetworkConfigData) {
+	if z.ctx.Err() != nil || source == nil || source.node == nil {
 		return
 	}
-	network, ok := source.Network(z.networkID)
+	network, ok := source.node.Network(z.networkID)
 	if !ok || network.Status != ZT.NetworkStatusOK || !network.Config.Equal(config) {
-		z.linkMu.Unlock()
+		return
+	}
+	z.stateMu.Lock()
+	if z.ctx.Err() != nil || z.runtime != source {
+		z.stateMu.Unlock()
 		return
 	}
 	z.latestConfig = config
 	z.haveLatestConfig = true
-	z.linkMu.Unlock()
+	z.stateMu.Unlock()
 	select {
 	case z.configCh <- struct{}{}:
 	default:
@@ -488,11 +571,11 @@ func (z *ZeroTier) ensureStarted(ctx context.Context) error {
 	}
 	z.retryNetwork()
 	for {
-		z.linkMu.RLock()
+		z.stateMu.RLock()
 		networkErr := z.networkErr
 		device := z.tunDevice
 		stateCh := z.stateCh
-		z.linkMu.RUnlock()
+		z.stateMu.RUnlock()
 		if device != nil && networkErr == nil {
 			return nil
 		}
@@ -518,17 +601,19 @@ func (z *ZeroTier) runNetworkConfig() {
 	for {
 		select {
 		case <-z.configCh:
-			z.linkMu.RLock()
+			z.stateMu.RLock()
+			runtime := z.runtime
 			config := z.latestConfig
 			haveConfig := z.haveLatestConfig
 			generation := z.configGeneration
-			z.linkMu.RUnlock()
+			z.stateMu.RUnlock()
 			if !haveConfig {
 				continue
 			}
 			if err := z.applyNetworkConfig(config, generation); err != nil && !errors.Is(err, errZeroTierStaleConfig) {
-				log.Errorln("[ZeroTier](%s) apply network configuration: %v", z.Name(), err)
-				z.recordConfigFailure(generation, err)
+				if z.recordConfigFailure(runtime, config, generation, err) {
+					log.Errorln("[ZeroTier](%s) apply network configuration: %v", z.Name(), err)
+				}
 			}
 		case <-z.ctx.Done():
 			return
@@ -536,191 +621,293 @@ func (z *ZeroTier) runNetworkConfig() {
 	}
 }
 
-func (z *ZeroTier) handleNodeEvent(source *ZT.Node, event ZT.Event) {
-	if z.ctx.Err() != nil {
+func (z *ZeroTier) handleNodeEvent(source *zeroTierRuntime, event ZT.Event) {
+	if !z.acceptNodeEvent(source, event) {
 		return
 	}
-	// EventNodeUp is emitted synchronously by NewNode before it can be assigned
-	// to source. All later events must belong to the currently active node.
-	if source != nil {
-		z.linkMu.RLock()
-		current := z.node == source
-		z.linkMu.RUnlock()
-		if !current {
+	switch event.Type {
+	case ZT.EventNodeDown:
+		log.Debugln("[ZeroTier](%s) node %s shut down", z.Name(), event.NodeAddress)
+	case ZT.EventNodeUp:
+		if ZT.IsAdHocNetworkID(z.networkID) {
+			log.Infoln("[ZeroTier](%s) node %s initialized", z.Name(), event.NodeAddress)
+		} else {
+			log.Infoln("[ZeroTier](%s) node %s initialized; authorize this ID on network %016x", z.Name(), event.NodeAddress, z.networkID)
+		}
+	case ZT.EventNodeOnline:
+		log.Infoln("[ZeroTier](%s) node %s is online via %s", z.Name(), event.NodeAddress, event.Endpoint)
+	case ZT.EventNodeOffline:
+		log.Warnln("[ZeroTier](%s) node %s is offline", z.Name(), event.NodeAddress)
+	case ZT.EventNodeIdentityCollision:
+		go z.recoverIdentityCollision(source, event.NodeAddress)
+	case ZT.EventPeerIdentityLearned:
+		if event.PeerRole != ZT.PeerRoleLeaf {
+			log.Debugln("[ZeroTier](%s) loaded %s root identity %s", z.Name(), event.PeerRole, event.PeerAddress)
+		} else {
+			log.Debugln("[ZeroTier](%s) loaded peer identity %s", z.Name(), event.PeerAddress)
+		}
+	case ZT.EventPeerPathLearned:
+		if event.PeerRole != ZT.PeerRoleLeaf {
+			log.Debugln("[ZeroTier](%s) %s root %s authenticated path %s", z.Name(), event.PeerRole, event.PeerAddress, event.Endpoint)
+		} else {
+			log.Debugln("[ZeroTier](%s) peer %s authenticated path %s", z.Name(), event.PeerAddress, event.Endpoint)
+		}
+	case ZT.EventPeerRouteChanged:
+		switch event.Route {
+		case ZT.PeerRouteDirect:
+			if event.Endpoint.IsValid() {
+				log.Debugln("[ZeroTier](%s) peer %s selected direct route via %s", z.Name(), event.PeerAddress, event.Endpoint)
+			} else {
+				log.Debugln("[ZeroTier](%s) peer %s selected %d direct paths", z.Name(), event.PeerAddress, event.PathCount)
+			}
+		case ZT.PeerRouteRelayed:
+			log.Debugln("[ZeroTier](%s) peer %s selected upstream relay route", z.Name(), event.PeerAddress)
+		default:
+			log.Debugln("[ZeroTier](%s) peer %s selected unknown route %d", z.Name(), event.PeerAddress, event.Route)
+		}
+	case ZT.EventLocalSurfaceChanged:
+		log.Debugln("[ZeroTier](%s) external surface changed %s -> %s after report from %s root %s; revalidating %d paths", z.Name(), event.PreviousEndpoint, event.Endpoint, event.PeerRole, event.ReporterAddress, event.PathCount)
+	case ZT.EventNetworkConfigPending:
+		log.Debugln("[ZeroTier](%s) requesting configuration for network %016x", z.Name(), event.NetworkID)
+	case ZT.EventNetworkConfigReady:
+		if !z.clearLoggedNetworkFailure(source) {
 			return
 		}
-	}
-	switch event.Type {
-	case ZT.EventNodeUp:
-		log.Infoln("[ZeroTier](%s) node %s started; authorize this ID on network %016x", z.Name(), event.Address, z.networkID)
-	case ZT.EventOnline:
-		log.Infoln("[ZeroTier](%s) node %s is online via %s", z.Name(), event.Address, event.Endpoint)
-	case ZT.EventOffline:
-		log.Warnln("[ZeroTier](%s) node %s is offline", z.Name(), event.Address)
-	case ZT.EventNetworkReady:
-		log.Infoln("[ZeroTier](%s) network %016x configuration is ready", z.Name(), event.NetworkID)
+		if ZT.IsAdHocNetworkID(event.NetworkID) {
+			log.Infoln("[ZeroTier](%s) network %016x ad-hoc configuration created", z.Name(), event.NetworkID)
+		} else {
+			log.Infoln("[ZeroTier](%s) network %016x controller configuration accepted", z.Name(), event.NetworkID)
+		}
+	case ZT.EventNetworkConfigChanged:
+		if !z.clearLoggedNetworkFailure(source) {
+			return
+		}
+		if ZT.IsAdHocNetworkID(event.NetworkID) {
+			log.Debugln("[ZeroTier](%s) network %016x ad-hoc configuration refresh accepted", z.Name(), event.NetworkID)
+		} else {
+			log.Debugln("[ZeroTier](%s) network %016x controller configuration update accepted", z.Name(), event.NetworkID)
+		}
 	case ZT.EventNetworkAccessDenied:
-		z.invalidateNetwork(errors.New("ZeroTier network access denied"), "", false)
+		networkErr := errors.New("ZeroTier network access denied")
+		if shouldLog := z.invalidateNetwork(source, networkErr, "", false); shouldLog {
+			log.Warnln("[ZeroTier](%s) network %016x access denied", z.Name(), event.NetworkID)
+		}
 	case ZT.EventNetworkNotFound:
-		z.invalidateNetwork(errors.New("ZeroTier network not found or controller unsupported"), "", false)
+		var networkErr error
+		if ZT.IsAdHocNetworkID(event.NetworkID) {
+			networkErr = errors.New("unsupported ZeroTier ad-hoc network ID")
+		} else {
+			networkErr = errors.New("ZeroTier network not found or controller unsupported")
+		}
+		if shouldLog := z.invalidateNetwork(source, networkErr, "", false); shouldLog {
+			log.Warnln("[ZeroTier](%s) network %016x: %v", z.Name(), event.NetworkID, networkErr)
+		}
 	case ZT.EventNetworkAuthenticationRequired:
 		authURL, err := event.Authentication.LoginURL()
 		if err != nil {
-			z.invalidateNetwork(fmt.Errorf("ZeroTier network authentication required: %w", err), "", false)
+			networkErr := fmt.Errorf("ZeroTier network authentication required: %w", err)
+			if shouldLog := z.invalidateNetwork(source, networkErr, "", false); shouldLog {
+				log.Warnln("[ZeroTier](%s) network %016x: %v", z.Name(), event.NetworkID, networkErr)
+			}
 			return
 		}
-		z.linkMu.RLock()
-		changed := z.authURL != authURL
-		z.linkMu.RUnlock()
-		if changed {
-			log.Infoln("[ZeroTier](%s) network authentication required; complete login at %s", z.Name(), authURL)
+		if shouldLog := z.invalidateNetwork(source, nil, authURL, false); shouldLog {
+			log.Infoln("[ZeroTier](%s) network %016x authentication required; complete login at %s", z.Name(), event.NetworkID, authURL)
 		}
-		z.invalidateNetwork(nil, authURL, false)
-	case ZT.EventFatalIdentityCollision:
-		go z.recoverIdentityCollision(event.Address)
+	case ZT.EventNetworkLeft:
+		if shouldLog := z.invalidateNetwork(source, errors.New("ZeroTier network was left"), "", false); shouldLog {
+			log.Warnln("[ZeroTier](%s) network %016x was left", z.Name(), event.NetworkID)
+		}
+	default:
+		log.Debugln("[ZeroTier](%s) ignored unknown node event %d", z.Name(), event.Type)
 	}
 }
 
-func (z *ZeroTier) recoverIdentityCollision(address ZT.Address) {
-	z.lifecycleMu.Lock()
-	if z.closed || z.identityRecovering {
-		z.lifecycleMu.Unlock()
-		return
+// acceptNodeEvent rejects callbacks from retired runtimes and network events
+// superseded before delivery. NodeDown remains useful after detach. Constructor
+// callbacks use an allocated but not yet published runtime whose Node is nil.
+func (z *ZeroTier) acceptNodeEvent(source *zeroTierRuntime, event ZT.Event) bool {
+	if event.Type == ZT.EventNodeDown {
+		return true
 	}
-	z.linkMu.Lock()
-	node := z.node
-	if node == nil || node.Address() != address {
-		z.linkMu.Unlock()
-		z.lifecycleMu.Unlock()
-		return
+	if z.ctx.Err() != nil {
+		return false
 	}
-	z.identityRecovering = true
-	node, nodeCancel, wireTransport, device := z.detachRuntimeLocked()
-	z.resetNetworkStateLocked(nil)
-	z.linkMu.Unlock()
+	if source == nil {
+		return false
+	}
+	if source.node == nil {
+		return true
+	}
+	z.stateMu.RLock()
+	current := z.runtime == source
+	z.stateMu.RUnlock()
+	return current && event.MatchesNodeState(source.node)
+}
 
-	_ = closeZeroTierRuntime(node, nodeCancel, wireTransport, device)
+func (z *ZeroTier) recoverIdentityCollision(source *zeroTierRuntime, address ZT.Address) {
+	z.operationMu.Lock()
+	defer z.operationMu.Unlock()
+	if z.closed || z.ctx.Err() != nil {
+		return
+	}
+	z.stateMu.Lock()
+	if z.runtime != source || source == nil || source.nodeAddress != address {
+		z.stateMu.Unlock()
+		return
+	}
+	runtime, device := z.detachRuntimeLocked()
+	z.resetNetworkStateLocked(nil)
+	z.stateMu.Unlock()
+
+	_ = runtime.close(device)
 	if err := ZT.RotateIdentityState(z.stateStore); err != nil {
 		log.Warnln("[ZeroTier](%s) unable to rotate collided identity: %v", z.Name(), err)
 	}
-	z.lifecycleMu.Unlock()
-
 	log.Warnln("[ZeroTier](%s) node %s has an identity collision; generating a new identity", z.Name(), address)
-	startErr := z.start()
-	z.lifecycleMu.Lock()
-	z.identityRecovering = false
-	z.lifecycleMu.Unlock()
+	startErr := z.startLocked()
 	if startErr != nil && !errors.Is(startErr, errZeroTierClosed) {
 		log.Errorln("[ZeroTier](%s) restart after identity collision: %v", z.Name(), startErr)
-		z.invalidateNetwork(startErr, "", false)
+		z.invalidateNetwork(nil, startErr, "", false)
 	}
 }
 
-func (z *ZeroTier) retryNetwork() bool {
-	z.linkMu.Lock()
+func (z *ZeroTier) retryNetwork() {
+	z.stateMu.Lock()
 	if z.ctx.Err() != nil {
-		z.linkMu.Unlock()
-		return false
+		z.stateMu.Unlock()
+		return
 	}
 	if z.tunDevice != nil && z.networkErr == nil {
-		z.linkMu.Unlock()
-		return false
+		z.stateMu.Unlock()
+		return
 	}
 	if z.networkRetrying {
-		z.linkMu.Unlock()
-		return false
+		z.stateMu.Unlock()
+		return
 	}
 	z.networkRetrying = true
 	z.networkErr = nil
 	retryConfig := z.retryLatestConfig && z.haveLatestConfig
+	haveConfig := z.haveLatestConfig
 	config := z.latestConfig
-	node := z.node
+	runtime := z.runtime
 	generation := z.configGeneration
-	z.linkMu.Unlock()
+	z.stateMu.Unlock()
 	defer func() {
-		z.linkMu.Lock()
+		z.stateMu.Lock()
 		z.networkRetrying = false
-		z.linkMu.Unlock()
+		z.stateMu.Unlock()
 	}()
 	if retryConfig {
 		if err := z.applyNetworkConfig(config, generation); err == nil {
-			return false
+			return
 		} else if !errors.Is(err, errZeroTierStaleConfig) {
-			z.recordConfigFailure(generation, err)
+			z.recordConfigFailure(runtime, config, generation, err)
 		}
 	}
-	if node == nil {
+	if runtime == nil {
+		return
+	}
+	operation := "refresh network configuration"
+	var err error
+	if _, joined := runtime.node.Network(z.networkID); joined {
+		err = runtime.node.RefreshNetwork(z.networkID)
+	} else {
+		operation = "rejoin network"
+		err = runtime.node.Join(z.networkID)
+	}
+	if err != nil {
+		recorded := false
+		z.stateMu.Lock()
+		if z.ctx.Err() == nil && z.configSnapshotCurrentLocked(runtime, config, haveConfig, generation) {
+			z.setNetworkFailureLocked(fmt.Errorf("%s: %w", operation, err), z.authURL, z.retryLatestConfig)
+			recorded = true
+		}
+		z.stateMu.Unlock()
+		if recorded {
+			if retryConfig {
+				log.Debugln("[ZeroTier](%s) %s after local apply failure: %v", z.Name(), operation, err)
+			} else {
+				log.Debugln("[ZeroTier](%s) %s: %v", z.Name(), operation, err)
+			}
+		}
+	}
+}
+
+func (z *ZeroTier) recordConfigFailure(runtime *zeroTierRuntime, config ZT.NetworkConfigData, generation uint64, err error) bool {
+	z.stateMu.Lock()
+	defer z.stateMu.Unlock()
+	if z.ctx.Err() != nil || !z.configSnapshotCurrentLocked(runtime, config, true, generation) {
 		return false
 	}
-	if err := node.RefreshNetwork(z.networkID); err != nil {
-		if retryConfig {
-			log.Debugln("[ZeroTier](%s) refresh network configuration after local apply failure: %v", z.Name(), err)
-		} else {
-			log.Debugln("[ZeroTier](%s) refresh network configuration: %v", z.Name(), err)
-		}
-		z.linkMu.Lock()
-		if z.ctx.Err() == nil && z.node == node && z.configGeneration == generation {
-			z.setNetworkFailureLocked(fmt.Errorf("refresh ZeroTier network configuration: %w", err), z.authURL, z.retryLatestConfig)
-		}
-		z.linkMu.Unlock()
-	}
+	z.setNetworkFailureLocked(err, z.authURL, true)
 	return true
 }
 
-func (z *ZeroTier) recordConfigFailure(generation uint64, err error) {
-	z.linkMu.Lock()
-	defer z.linkMu.Unlock()
-	if z.ctx.Err() != nil || z.configGeneration != generation {
-		return
-	}
-	z.setNetworkFailureLocked(err, z.authURL, true)
-}
-
-func (z *ZeroTier) invalidateNetwork(err error, authURL string, retryConfig bool) {
-	z.linkMu.Lock()
-	if z.ctx.Err() != nil {
-		z.linkMu.Unlock()
-		return
+// invalidateNetwork detaches the virtual stack and publishes a network
+// failure. A non-nil source limits the mutation to that runtime generation. It
+// reports whether this failure differs from the last logged failure.
+func (z *ZeroTier) invalidateNetwork(source *zeroTierRuntime, err error, authURL string, retryConfig bool) (shouldLog bool) {
+	z.stateMu.Lock()
+	if z.ctx.Err() != nil || source != nil && z.runtime != source {
+		z.stateMu.Unlock()
+		return false
 	}
 	device := z.detachStackLocked()
+	if !retryConfig {
+		z.latestConfig = ZT.NetworkConfigData{}
+		z.haveLatestConfig = false
+	}
+	failure := ""
+	if authURL != "" {
+		failure = "authentication-required:" + authURL
+	} else if err != nil {
+		failure = err.Error()
+	}
+	shouldLog = z.loggedNetworkFailure != failure
+	z.loggedNetworkFailure = failure
 	z.configGeneration++
 	z.setNetworkFailureLocked(err, authURL, retryConfig)
-	z.linkMu.Unlock()
+	z.stateMu.Unlock()
 	if device != nil {
 		go func() { _ = device.Close() }()
 	}
+	return shouldLog
 }
 
-func (z *ZeroTier) invalidateDevice(device wireguard.Device, err error) {
-	z.linkMu.Lock()
+func (z *ZeroTier) invalidateDevice(device ipStack, err error) bool {
+	z.stateMu.Lock()
 	if z.ctx.Err() != nil || z.tunDevice != device {
-		z.linkMu.Unlock()
-		return
+		z.stateMu.Unlock()
+		return false
 	}
 	z.detachStackLocked()
 	z.setNetworkFailureLocked(err, z.authURL, true)
-	z.linkMu.Unlock()
+	z.stateMu.Unlock()
 	go func() { _ = device.Close() }()
+	return true
 }
 
 func (z *ZeroTier) applyNetworkConfig(config ZT.NetworkConfigData, generation uint64) error {
-	z.configMu.Lock()
-	defer z.configMu.Unlock()
+	z.operationMu.Lock()
+	defer z.operationMu.Unlock()
 	if z.ctx.Err() != nil {
 		return errZeroTierClosed
 	}
-	z.linkMu.RLock()
-	if !z.networkConfigCurrentLocked(config, generation) {
-		z.linkMu.RUnlock()
+	z.stateMu.RLock()
+	runtime := z.runtime
+	if !z.networkConfigCurrentLocked(runtime, config, generation) {
+		z.stateMu.RUnlock()
 		return errZeroTierStaleConfig
 	}
 	oldDevice := z.tunDevice
-	ipLink := z.ipLink
 	oldConfig := z.config
-	z.linkMu.RUnlock()
-	if ipLink == nil {
+	z.stateMu.RUnlock()
+	if runtime == nil {
 		return errors.New("ZeroTier core is not started")
 	}
+	ipLink := runtime.ipLink
 	if len(config.Assigned) == 0 {
 		return errors.New("ZeroTier controller assigned no managed addresses")
 	}
@@ -732,7 +919,7 @@ func (z *ZeroTier) applyNetworkConfig(config ZT.NetworkConfigData, generation ui
 	replaceDevice := oldDevice == nil || !oldConfig.ManagedAddressesEqual(config) || z.effectiveMTU(oldConfig) != mtu
 	device := oldDevice
 	if replaceDevice {
-		device, err = wireguard.NewStackDevice(config.Assigned, mtu)
+		device, err = newIPStack(z.option.IPStack, config.Assigned, mtu)
 		if err != nil {
 			return fmt.Errorf("create ZeroTier stack device: %w", err)
 		}
@@ -745,25 +932,39 @@ func (z *ZeroTier) applyNetworkConfig(config ZT.NetworkConfigData, generation ui
 			return errZeroTierClosed
 		}
 	}
-	z.linkMu.Lock()
-	if z.ipLink != ipLink || !z.networkConfigCurrentLocked(config, generation) || (!replaceDevice && z.tunDevice != oldDevice) {
-		z.linkMu.Unlock()
+	z.stateMu.RLock()
+	current := z.tunDevice == oldDevice && z.networkConfigCurrentLocked(runtime, config, generation)
+	z.stateMu.RUnlock()
+	if !current {
 		if replaceDevice {
 			_ = device.Close()
 		}
 		return errZeroTierStaleConfig
 	}
-	if err = ipLink.ApplyNetworkConfig(config); err != nil {
-		z.linkMu.Unlock()
+	linkConfig := config
+	linkConfig.MTU = mtu
+	if err = ipLink.ApplyNetworkConfig(linkConfig); err != nil {
 		if replaceDevice {
 			_ = device.Close()
 		}
 		return err
 	}
-	if replaceDevice {
-		if resetErr := ipLink.ResetMulticast(); resetErr != nil {
-			log.Debugln("[ZeroTier](%s) reset multicast subscriptions: %v", z.Name(), resetErr)
+	z.stateMu.Lock()
+	if z.tunDevice != oldDevice || !z.networkConfigCurrentLocked(runtime, config, generation) {
+		z.stateMu.Unlock()
+		var rollbackErr error
+		if oldConfig.NetworkID == z.networkID && len(oldConfig.Assigned) != 0 {
+			oldLinkConfig := oldConfig
+			oldLinkConfig.MTU = z.effectiveMTU(oldConfig)
+			rollbackErr = ipLink.ApplyNetworkConfig(oldLinkConfig)
 		}
+		if replaceDevice {
+			_ = device.Close()
+		}
+		if rollbackErr != nil {
+			log.Warnln("[ZeroTier](%s) restore IP link after stale configuration: %v", z.Name(), rollbackErr)
+		}
+		return errZeroTierStaleConfig
 	}
 	replacedDevice := z.tunDevice
 	z.config = config
@@ -774,32 +975,38 @@ func (z *ZeroTier) applyNetworkConfig(config ZT.NetworkConfigData, generation ui
 	z.retryLatestConfig = false
 	z.configGeneration++
 	z.notifyStateLocked()
-	z.linkMu.Unlock()
+	z.stateMu.Unlock()
 	if !replaceDevice {
 		return nil
 	}
-	go z.runStackPackets(device, ipLink)
+	go z.runStackPackets(runtime, device)
+	action := "joined"
 	if replacedDevice != nil {
 		_ = replacedDevice.Close()
+		action = "updated"
 	}
-	log.Infoln("[ZeroTier](%s) joined %016x (%s), addresses=%v routes=%v mtu=%d", z.Name(), config.NetworkID, config.Name, config.Assigned, config.Routes, mtu)
+	log.Infoln("[ZeroTier](%s) %s network %016x (%s), addresses=%v routes=%v mtu=%d", z.Name(), action, config.NetworkID, config.Name, config.Assigned, config.Routes, mtu)
 	return nil
 }
 
-func (z *ZeroTier) networkConfigCurrentLocked(config ZT.NetworkConfigData, generation uint64) bool {
-	if z.configGeneration != generation {
-		return false
-	}
-	node := z.node
-	if node == nil {
-		return false
-	}
-	network, ok := node.Network(z.networkID)
-	return ok && network.Status == ZT.NetworkStatusOK && network.Config.Equal(config)
+func (z *ZeroTier) networkConfigCurrentLocked(runtime *zeroTierRuntime, config ZT.NetworkConfigData, generation uint64) bool {
+	return z.configSnapshotCurrentLocked(runtime, config, true, generation)
+}
+
+func (z *ZeroTier) configSnapshotCurrentLocked(runtime *zeroTierRuntime, config ZT.NetworkConfigData, haveConfig bool, generation uint64) bool {
+	return z.configGeneration == generation && z.runtime == runtime && z.haveLatestConfig == haveConfig && (!haveConfig || z.latestConfig.Equal(config))
 }
 
 func (z *ZeroTier) effectiveMTU(config ZT.NetworkConfigData) uint32 {
 	mtu := config.MTU
+	switch {
+	case mtu == 0:
+		mtu = ZT.DefaultNetworkMTU
+	case mtu < ZT.MinNetworkMTU:
+		mtu = ZT.MinNetworkMTU
+	case mtu > ZT.MaxNetworkMTU:
+		mtu = ZT.MaxNetworkMTU
+	}
 	if z.option.MTU != 0 && uint32(z.option.MTU) < mtu {
 		mtu = uint32(z.option.MTU)
 	}
@@ -836,93 +1043,151 @@ func (z *ZeroTier) resolverForNetworkConfig(config ZT.NetworkConfigData) (resolv
 	return resolver.Resolver(dns.NewResolver(dns.Config{Main: nameServers, IPv6: config.HasManagedIPv6()})), nil
 }
 
-func (z *ZeroTier) runStackPackets(device wireguard.Device, ipLink *ZTIP.Link) {
-	buffer := make([]byte, 64*1024)
-	buffers := [][]byte{buffer}
-	sizes := []int{0}
+func (z *ZeroTier) runStackPackets(runtime *zeroTierRuntime, device ipStack) {
+	mtu, err := device.MTU()
+	if err != nil || mtu < 1 {
+		mtu = 64 * 1024
+	}
+	batchSize := device.BatchSize()
+	if batchSize < 1 {
+		batchSize = 1
+	}
+	storage := make([]byte, mtu*batchSize)
+	buffers := make([][]byte, batchSize)
+	for index := range buffers {
+		start := index * mtu
+		buffers[index] = storage[start : start+mtu : start+mtu]
+	}
+	sizes := make([]int, batchSize)
+	writeErrors := make([]error, 0, batchSize)
 	for z.ctx.Err() == nil {
-		if _, err := device.Read(buffers, sizes, 0); err != nil {
+		count, readErr := device.Read(buffers, sizes, 0)
+		if readErr != nil {
 			if z.ctx.Err() == nil {
-				if !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
-					log.Errorln("[ZeroTier](%s) stack read: %v", z.Name(), err)
+				invalidated := z.invalidateDevice(device, fmt.Errorf("ZeroTier stack read failed: %w", readErr))
+				if invalidated && !errors.Is(readErr, net.ErrClosed) && !errors.Is(readErr, os.ErrClosed) {
+					log.Errorln("[ZeroTier](%s) stack read: %v", z.Name(), readErr)
 				}
-				z.invalidateDevice(device, fmt.Errorf("ZeroTier stack read failed: %w", err))
 			}
 			return
 		}
-		packet := append([]byte(nil), buffer[:sizes[0]]...)
-		z.linkMu.RLock()
-		current := z.tunDevice == device && z.ipLink == ipLink
-		z.linkMu.RUnlock()
+		z.operationMu.RLock()
+		z.stateMu.RLock()
+		current := z.runtime == runtime && z.tunDevice == device
+		z.stateMu.RUnlock()
 		if !current {
+			z.operationMu.RUnlock()
 			return
 		}
-		err := ipLink.WritePacket(packet)
-		if err != nil {
-			log.Debugln("[ZeroTier](%s) send IP packet: %v", z.Name(), err)
+		writeErrors = writeErrors[:0]
+		for index := 0; index < count; index++ {
+			if writeErr := runtime.ipLink.WritePacket(buffers[index][:sizes[index]]); writeErr != nil {
+				writeErrors = append(writeErrors, writeErr)
+			}
+		}
+		z.operationMu.RUnlock()
+		for _, writeErr := range writeErrors {
+			log.Debugln("[ZeroTier](%s) send IP packet: %v", z.Name(), writeErr)
 		}
 	}
 }
 
 func (z *ZeroTier) runInboundFrames() {
+	frames := make([]zeroTierInboundFrame, zeroTierFrameBatchSize)
+	packets := make([][]byte, 0, zeroTierFrameBatchSize)
+	frameErrors := make([]error, 0, zeroTierFrameBatchSize)
 	for {
+		var first zeroTierInboundFrame
 		select {
-		case inbound := <-z.frameCh:
-			z.linkMu.RLock()
-			current := z.node == inbound.node
-			ipLink := z.ipLink
-			z.linkMu.RUnlock()
-			if !current || ipLink == nil {
-				continue
-			}
-			z.handleInboundFrame(inbound.node, ipLink, inbound.frame)
+		case first = <-z.frameCh:
 		case <-z.ctx.Done():
 			return
 		}
-	}
-}
-
-func (z *ZeroTier) handleInboundFrame(source *ZT.Node, ipLink *ZTIP.Link, frame ZT.Frame) {
-	packet, err := ipLink.HandleFrame(frame)
-	if err != nil {
-		log.Debugln("[ZeroTier](%s) process inbound frame: %v", z.Name(), err)
-	}
-	if len(packet) == 0 {
-		return
-	}
-	z.linkMu.RLock()
-	current := z.node == source && z.ipLink == ipLink
-	device := z.tunDevice
-	z.linkMu.RUnlock()
-	if current && device != nil {
-		if _, err = device.Write([][]byte{packet}, 0); err != nil {
-			if !errors.Is(err, net.ErrClosed) && !errors.Is(err, os.ErrClosed) {
-				log.Debugln("[ZeroTier](%s) stack write: %v", z.Name(), err)
-			}
-			if z.ctx.Err() == nil {
-				z.invalidateDevice(device, fmt.Errorf("ZeroTier stack write failed: %w", err))
+		frames[0] = first
+		count := 1
+	drain:
+		for count < len(frames) {
+			select {
+			case frames[count] = <-z.frameCh:
+				count++
+			default:
+				break drain
 			}
 		}
+		device, output, processingErrors := z.processInboundFrames(frames[:count], packets[:0], frameErrors[:0])
+		for _, err := range processingErrors {
+			log.Debugln("[ZeroTier](%s) process inbound frame: %v", z.Name(), err)
+		}
+		if device != nil && len(output) != 0 {
+			if _, writeErr := device.Write(output, 0); writeErr != nil && z.ctx.Err() == nil {
+				invalidated := z.invalidateDevice(device, fmt.Errorf("ZeroTier stack write failed: %w", writeErr))
+				if invalidated && !errors.Is(writeErr, net.ErrClosed) && !errors.Is(writeErr, os.ErrClosed) {
+					log.Debugln("[ZeroTier](%s) stack write: %v", z.Name(), writeErr)
+				}
+			}
+		}
+		for index := 0; index < count; index++ {
+			frames[index] = zeroTierInboundFrame{}
+		}
+		packets, frameErrors = output, processingErrors
 	}
 }
 
-func (z *ZeroTier) networkStackFor(destination netip.Addr) (*ZTIP.Link, wireguard.Device, error) {
-	z.linkMu.RLock()
-	ipLink := z.ipLink
+// processInboundFrames converts one callback-order batch while preventing a
+// concurrent configuration update from mutating its IP link. Stack delivery
+// follows after the read lock is released.
+func (z *ZeroTier) processInboundFrames(frames []zeroTierInboundFrame, packets [][]byte, frameErrors []error) (ipStack, [][]byte, []error) {
+	z.operationMu.RLock()
+	z.stateMu.RLock()
+	runtime := z.runtime
+	device := z.tunDevice
+	z.stateMu.RUnlock()
+	if runtime == nil {
+		z.operationMu.RUnlock()
+		return nil, packets, frameErrors
+	}
+	for _, inbound := range frames {
+		if inbound.runtime != runtime {
+			continue
+		}
+		packet, err := runtime.ipLink.HandleFrame(inbound.frame)
+		if err != nil {
+			frameErrors = append(frameErrors, err)
+		}
+		if len(packet) != 0 {
+			packets = append(packets, packet)
+		}
+	}
+	z.operationMu.RUnlock()
+	return device, packets, frameErrors
+}
+
+func (z *ZeroTier) networkStackFor(destination netip.Addr) (*ZTIP.Link, ipStack, error) {
+	z.operationMu.RLock()
+	defer z.operationMu.RUnlock()
+	z.stateMu.RLock()
+	runtime := z.runtime
 	device := z.tunDevice
 	networkErr := z.networkErr
-	z.linkMu.RUnlock()
-	if ipLink == nil {
+	z.stateMu.RUnlock()
+	if runtime == nil {
 		return nil, nil, errors.New("ZeroTier core is not ready")
 	}
-	if err := ipLink.ValidateDestination(destination); err != nil {
-		return nil, nil, err
-	}
+	ipLink := runtime.ipLink
 	if networkErr != nil {
 		return nil, nil, networkErr
 	}
 	if device == nil {
 		return nil, nil, errors.New("ZeroTier stack is not ready")
+	}
+	if err := ipLink.ValidateDestination(destination); err != nil {
+		return nil, nil, err
+	}
+	z.stateMu.RLock()
+	current := z.runtime == runtime && z.tunDevice == device && z.networkErr == nil
+	z.stateMu.RUnlock()
+	if !current {
+		return nil, nil, errors.New("ZeroTier stack changed while validating destination")
 	}
 	return ipLink, device, nil
 }
@@ -940,27 +1205,28 @@ func (d zeroTierNetDialer) DialContext(ctx context.Context, network, address str
 	if err != nil {
 		return nil, err
 	}
-	return device.DialContext(ctx, network, M.ParseSocksaddr(address).Unwrap())
+	return device.DialTCP(ctx, network, netip.AddrPort{}, destination)
 }
 
 func (z *ZeroTier) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
 	if err = z.ensureStarted(ctx); err != nil {
 		return nil, err
 	}
-	z.linkMu.RLock()
+	z.stateMu.RLock()
 	remoteResolver := z.resolver
-	z.linkMu.RUnlock()
+	z.stateMu.RUnlock()
 	var conn net.Conn
-	if metadata.Resolved() && remoteResolver == nil {
-		conn, err = (zeroTierNetDialer{zeroTier: z}).DialContext(ctx, "tcp", metadata.RemoteAddress())
-	} else {
+	if !metadata.Resolved() || remoteResolver != nil {
 		r := resolver.DefaultResolver
 		if remoteResolver != nil {
 			r = remoteResolver
 		}
 		options := z.DialOptions()
-		options = append(options, dialer.WithResolver(r), dialer.WithNetDialer(zeroTierNetDialer{zeroTier: z}))
+		options = append(options, dialer.WithResolver(r))
+		options = append(options, dialer.WithNetDialer(zeroTierNetDialer{zeroTier: z}))
 		conn, err = dialer.NewDialer(options...).DialContext(ctx, "tcp", metadata.RemoteAddress())
+	} else {
+		conn, err = (zeroTierNetDialer{zeroTier: z}).DialContext(ctx, "tcp", metadata.AddrPort().String())
 	}
 	if err != nil {
 		return nil, err
@@ -982,32 +1248,41 @@ func (z *ZeroTier) ListenPacketContext(ctx context.Context, metadata *C.Metadata
 	if err != nil {
 		return nil, err
 	}
-	packetConn, err := device.ListenPacket(ctx, M.SocksaddrFrom(metadata.DstIP, metadata.DstPort).Unwrap())
+	// The ipStack contract guarantees that a generic UDP wildcard supports both address families.
+	packetConn, err := device.ListenUDP(ctx, "udp", netip.AddrPort{})
 	if err != nil {
 		return nil, err
 	}
 	if packetConn == nil {
 		return nil, errors.New("packetConn is nil")
 	}
-	return NewPacketConn(&zeroTierPacketConn{PacketConn: packetConn, validateDestination: ipLink.ValidateDestination}, z), nil
+	return NewPacketConn(&zeroTierPacketConn{PacketConn: packetConn, validateDestination: func(destination netip.Addr) error {
+		currentLink, currentDevice, validateErr := z.networkStackFor(destination)
+		if validateErr != nil {
+			return validateErr
+		}
+		if currentLink != ipLink || currentDevice != device {
+			return errors.New("ZeroTier stack changed while packet connection was active")
+		}
+		return nil
+	}}, z), nil
 }
 
 func (z *ZeroTier) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
-	if metadata.Host == "" {
-		return nil
-	}
-	z.linkMu.RLock()
+	z.stateMu.RLock()
 	remoteResolver := z.resolver
-	z.linkMu.RUnlock()
-	r := resolver.DefaultResolver
-	if remoteResolver != nil {
-		r = remoteResolver
+	z.stateMu.RUnlock()
+	if (!metadata.Resolved() || remoteResolver != nil) && metadata.Host != "" {
+		r := resolver.DefaultResolver
+		if remoteResolver != nil {
+			r = remoteResolver
+		}
+		ip, err := resolveIPWithResolver(ctx, metadata.Host, z.prefer, r)
+		if err != nil {
+			return fmt.Errorf("can't resolve ip: %w", err)
+		}
+		metadata.DstIP = ip
 	}
-	address, err := resolveIPWithResolver(ctx, metadata.Host, z.prefer, r)
-	if err != nil {
-		return fmt.Errorf("can't resolve IP: %w", err)
-	}
-	metadata.DstIP = address
 	return nil
 }
 
@@ -1022,19 +1297,31 @@ func (z *ZeroTier) IsL3Protocol(*C.Metadata) bool {
 }
 
 func (z *ZeroTier) Close() error {
-	z.lifecycleMu.Lock()
+	// Cancel and close the physical transport before waiting for operationMu so
+	// an in-flight startup dial or wire write cannot prevent its own shutdown.
+	z.cancel()
+	z.stateMu.RLock()
+	runtime := z.runtime
+	z.stateMu.RUnlock()
+	if runtime != nil {
+		_ = runtime.wire.Close()
+	}
+	z.operationMu.Lock()
 	if z.closed {
-		z.lifecycleMu.Unlock()
+		z.operationMu.Unlock()
 		return nil
 	}
 	z.closed = true
-	z.cancel()
-	z.configMu.Lock()
-	z.linkMu.Lock()
-	node, nodeCancel, wireTransport, device := z.detachRuntimeLocked()
+	z.stateMu.Lock()
+	runtime, device := z.detachRuntimeLocked()
 	z.resetNetworkStateLocked(errZeroTierClosed)
-	z.linkMu.Unlock()
-	z.configMu.Unlock()
-	z.lifecycleMu.Unlock()
-	return closeZeroTierRuntime(node, nodeCancel, wireTransport, device)
+	z.stateMu.Unlock()
+	z.operationMu.Unlock()
+	if runtime != nil {
+		return runtime.close(device)
+	}
+	if device != nil {
+		return device.Close()
+	}
+	return nil
 }
