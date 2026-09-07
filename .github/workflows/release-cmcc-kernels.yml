@@ -75,14 +75,8 @@ jobs:
             asset_names="$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" \
               --json assets --jq '.assets[].name' | sort | paste -sd ' ' -)"
             expected_names="mihomo-android-arm64-v8-cmcc.gz mihomo-windows-amd64-v1-cmcc.zip"
-            cmcc_release_count="$(
-              gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-                --jq '.[].tag_name' |
-                awk -v prefix="$RELEASE_PREFIX" \
-                  'index($0, prefix) == 1 { count++ } END { print count + 0 }'
-            )"
             if [[ "$asset_names" == "$expected_names" &&
-              "$cmcc_release_count" == 1 && "$FORCE_RELEASE" != true ]]; then
+              "$FORCE_RELEASE" != true ]]; then
               should_build=false
             fi
           fi
@@ -240,7 +234,7 @@ jobs:
           path: ${{ runner.temp }}/cmcc-release
           merge-multiple: true
 
-      - name: Publish the verified prerelease
+      - name: Publish the verified release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -293,8 +287,7 @@ jobs:
             --target "$TARGET_SHA" \
             --title "CMCC Mihomo $VERSION" \
             --notes-file "$notes_file" \
-            --prerelease \
-            --latest=false
+            --latest
 
           mapfile -t uploaded_assets < <(
             gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
@@ -309,19 +302,8 @@ jobs:
             exit 1
           fi
 
-          mapfile -t old_releases < <(
-            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --jq '.[].tag_name' |
-              awk -v prefix="$RELEASE_PREFIX" 'index($0, prefix) == 1'
-          )
-          for old_release in "${old_releases[@]}"; do
-            if [[ "$old_release" != "$RELEASE_TAG" ]]; then
-              gh release delete "$old_release" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
-            fi
-          done
-
           {
-            echo "Published $RELEASE_TAG with exactly two kernel assets."
+            echo "Published $RELEASE_TAG with exactly two kernel assets; previous releases were preserved."
             echo
             echo '```text'
             echo "$checksums"
