@@ -48,7 +48,7 @@ jobs:
             echo "::warning title=Upstream Alpha history changed::The previously merged Alpha commit is no longer an ancestor of upstream/Alpha."
           fi
 
-          if ! git merge --no-edit upstream/Alpha; then
+          if ! git merge --no-commit --no-ff upstream/Alpha; then
             mapfile -t conflicts < <(git diff --name-only --diff-filter=U)
             {
               echo "### Upstream Alpha merge requires manual resolution"
@@ -70,6 +70,30 @@ jobs:
             git merge --abort || true
             exit 1
           fi
+
+          # GITHUB_TOKEN cannot push changes to workflow definitions. Keep the
+          # fork's workflows while still recording upstream/Alpha as a parent,
+          # so source updates continue automatically instead of failing at push.
+          mapfile -t workflow_changes < <(
+            git diff --cached --name-only -- .github/workflows
+          )
+          if (( ${#workflow_changes[@]} > 0 )); then
+            mapfile -t added_workflows < <(
+              git diff --cached --no-renames --name-only --diff-filter=A -- .github/workflows
+            )
+            if (( ${#added_workflows[@]} > 0 )); then
+              git rm -f -- "${added_workflows[@]}"
+            fi
+            git restore --source=HEAD --staged --worktree -- .github/workflows
+            {
+              echo "### Fork workflow definitions preserved"
+              echo
+              echo "The Actions token cannot update workflow files, so these upstream workflow changes were intentionally excluded:"
+              printf -- '- `%s`\n' "${workflow_changes[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          git commit --no-edit
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up Go
