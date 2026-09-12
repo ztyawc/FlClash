@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.44.4"
+  FLUTTER_VERSION: "3.47.1"
   GO_VERSION: "1.26.4"
 
 jobs:
@@ -118,9 +118,18 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: master
+          channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Rust for Android
+        run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
       - name: Set up Android NDK
         id: setup-ndk
@@ -194,7 +203,7 @@ jobs:
 
       - name: Run Flutter tests
         if: steps.pending.outputs.changed == 'true'
-        run: flutter test --reporter expanded
+        run: bash tool/test_special_flutter.sh
 
       - name: Build Android APKs before promotion
         if: steps.pending.outputs.changed == 'true'

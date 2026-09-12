@@ -1,12 +1,11 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
-import 'package:fl_clash/models/common.dart';
 import 'package:fl_clash/models/state.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/views/proxies/list.dart';
 import 'package:fl_clash/views/proxies/providers.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'setting.dart';
@@ -20,7 +19,6 @@ class ProxiesView extends ConsumerStatefulWidget {
 }
 
 class _ProxiesViewState extends ConsumerState<ProxiesView> {
-  final GlobalKey<CommonScaffoldState> _scaffoldKey = GlobalKey();
   final GlobalKey<ProxiesTabViewState> _proxiesTabKey = GlobalKey();
   bool _hasProviders = false;
   bool _isTab = false;
@@ -30,6 +28,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
     return [
       if (_isTab)
         IconButton(
+          tooltip: context.appLocalizations.scrollToSelected,
           onPressed: () {
             _proxiesTabKey.currentState?.scrollToGroupSelected();
           },
@@ -38,6 +37,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
       CommonPopupBox(
         targetBuilder: (open) {
           return IconButton(
+            tooltip: context.appLocalizations.more,
             onPressed: () {
               final isMobile = ref.read(isMobileViewProvider);
               open(offset: Offset(0, isMobile ? 0 : 20));
@@ -45,9 +45,9 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
             icon: const Icon(Icons.more_vert),
           );
         },
-        popup: CommonPopupMenu(
+        popupBuilder: (_) => CommonPopupMenu(
           items: [
-            PopupMenuItemData(
+            CommonPopupMenuItem(
               icon: Icons.tune,
               label: appLocalizations.settings,
               onPressed: () {
@@ -64,7 +64,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
               },
             ),
             if (_hasProviders)
-              PopupMenuItemData(
+              CommonPopupMenuItem(
                 icon: Icons.poll_outlined,
                 label: appLocalizations.providers,
                 onPressed: () {
@@ -122,14 +122,6 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
       },
       fireImmediately: true,
     );
-    ref.listenManual(
-      currentPageLabelProvider.select((state) => state == PageLabel.proxies),
-      (prev, next) {
-        if (prev != next && next == false) {
-          _scaffoldKey.currentState?.handleExitSearching();
-        }
-      },
-    );
   }
 
   @override
@@ -139,7 +131,6 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
     );
     final isLoading = ref.watch(loadingProvider(LoadingTag.proxies));
     return CommonScaffold(
-      key: _scaffoldKey,
       isLoading: isLoading,
       resizeToAvoidBottomInset: false,
       floatingActionButton: _buildFAB(),

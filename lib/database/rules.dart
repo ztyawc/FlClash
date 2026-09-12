@@ -74,13 +74,13 @@ class RulesDao extends DatabaseAccessor<Database> with _$RulesDaoMixin {
     );
 
     query.orderBy([
-      OrderingTerm.desc(
+      OrderingTerm.asc(
         profileRuleLinks.profileId.isNull().caseMatch<int>(
           when: {const Constant(true): const Constant(1)},
           orElse: const Constant(0),
         ),
       ),
-      OrderingTerm.desc(profileRuleLinks.order),
+      OrderingTerm.asc(profileRuleLinks.order),
     ]);
 
     return query.map((row) {
@@ -95,7 +95,6 @@ class RulesDao extends DatabaseAccessor<Database> with _$RulesDaoMixin {
 
     stmt.orderBy([
       (t) => OrderingTerm.asc(t.scene),
-      //v0.8.92 ordering desc
       (t) => OrderingTerm.desc(t.order),
       (t) => OrderingTerm.desc(t.id),
     ]);
@@ -110,22 +109,39 @@ class RulesDao extends DatabaseAccessor<Database> with _$RulesDaoMixin {
     });
   }
 
-  void restoreWithBatch(
-    Batch batch,
-    Iterable<Rule> rules,
-    Iterable<ProfileRuleLink> links,
-  ) {
+  void _putRulesWithBatch(Batch batch, Iterable<Rule> rules) {
     batch.insertAllOnConflictUpdate(
       this.rules,
       rules.map((item) => item.toCompanion()),
     );
-    final ruleIds = rules.map((item) => item.id);
-    batch.deleteWhere(this.rules, (t) => t.id.isNotIn(ruleIds));
+  }
+
+  void _putLinksWithBatch(Batch batch, Iterable<ProfileRuleLink> links) {
     final keys = indexing.generateNKeys(links.length);
     batch.insertAllOnConflictUpdate(
       profileRuleLinks,
       links.mapIndexed((index, item) => item.toCompanion(keys[index])),
     );
+  }
+
+  void mergeWithBatch(
+    Batch batch,
+    Iterable<Rule> rules,
+    Iterable<ProfileRuleLink> links,
+  ) {
+    _putRulesWithBatch(batch, rules);
+    _putLinksWithBatch(batch, links);
+  }
+
+  void restoreWithBatch(
+    Batch batch,
+    Iterable<Rule> rules,
+    Iterable<ProfileRuleLink> links,
+  ) {
+    _putRulesWithBatch(batch, rules);
+    final ruleIds = rules.map((item) => item.id);
+    batch.deleteWhere(this.rules, (t) => t.id.isNotIn(ruleIds));
+    _putLinksWithBatch(batch, links);
     final linkKeys = links.map((item) => item.key);
     batch.deleteWhere(profileRuleLinks, (t) => t.id.isNotIn(linkKeys));
   }
@@ -147,7 +163,7 @@ class RulesDao extends DatabaseAccessor<Database> with _$RulesDaoMixin {
   }
 
   Future<void> putProfileDisabledRule(int profileId, Rule rule) {
-    return _put(rule, profileId: profileId, scene: RuleScene.added);
+    return _put(rule, profileId: profileId, scene: RuleScene.disabled);
   }
 
   void setCustomRulesWithBatch(int profileId, Batch b, Iterable<Rule> rules) {

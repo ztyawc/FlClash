@@ -1,12 +1,12 @@
 import 'package:animations/animations.dart';
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/providers/app.dart';
-import 'package:fl_clash/state.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
+
+final rootNavigatorKey = GlobalKey<NavigatorState>();
 
 class BaseNavigator {
   static Future<T?> push<T>(BuildContext context, Widget child) async {
-    if (!globalState.container.read(isMobileViewProvider)) {
+    if (!context.isMobileView) {
       return Navigator.of(
         context,
       ).push<T>(CommonDesktopRoute(builder: (context) => child));
@@ -15,21 +15,6 @@ class BaseNavigator {
       context,
     ).push<T>(CommonRoute(builder: (context) => child));
   }
-
-  // static Future<T?> modal<T>(BuildContext context, Widget child) async {
-  //   if (globalState.appState.viewMode != ViewMode.mobile) {
-  //     return await globalState.showCommonDialog<T>(
-  //       child: CommonModal(
-  //         child: child,
-  //       ),
-  //     );
-  //   }
-  //   return await Navigator.of(context).push<T>(
-  //     CommonRoute(
-  //       builder: (context) => child,
-  //     ),
-  //   );
-  // }
 }
 
 const commonSharedXPageTransitions = SharedAxisPageTransitionsBuilder(

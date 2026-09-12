@@ -1,23 +1,25 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show Locale;
 
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
-import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/providers/state.dart';
 import 'package:flutter/services.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:wifi_ssid/wifi_ssid.dart';
 
 part 'generated/app.g.dart';
 
-@riverpod
-class RealTunEnable extends _$RealTunEnable with AutoDisposeNotifierMixin {
+@Riverpod(keepAlive: true)
+class AuthorizedTunEnable extends _$AuthorizedTunEnable
+    with AutoDisposeNotifierMixin {
   @override
-  bool build() {
-    return false;
+  TunAuthorizationState build() {
+    return TunAuthorizationState.none;
   }
 }
 
@@ -25,14 +27,14 @@ class RealTunEnable extends _$RealTunEnable with AutoDisposeNotifierMixin {
 class Logs extends _$Logs with AutoDisposeNotifierMixin {
   @override
   FixedList<Log> build() {
-    return FixedList(0);
+    return FixedList(maxLogsLength);
   }
 
   void add(Log value) {
     if (!ref.mounted) {
       return;
     }
-    this.value = state.copyWith()..add(value);
+    this.value = state.append(value);
   }
 
   Future<bool> exportLogs() async {
@@ -41,7 +43,7 @@ class Logs extends _$Logs with AutoDisposeNotifierMixin {
     final file = File(tempFilePath);
     await file.safeWriteAsString(logString);
     bool res = false;
-    res = await picker.saveFileWithPath(utils.logFile, tempFilePath) != null;
+    res = await picker.saveFileWithPath(logFileName, tempFilePath) != null;
     return res;
   }
 }
@@ -50,11 +52,14 @@ class Logs extends _$Logs with AutoDisposeNotifierMixin {
 class Requests extends _$Requests with AutoDisposeNotifierMixin {
   @override
   FixedList<TrackerInfo> build() {
-    return FixedList(0);
+    return FixedList(maxRequestsLength);
   }
 
   void addRequest(TrackerInfo value) {
-    this.value = state.copyWith()..add(value);
+    if (!ref.mounted) {
+      return;
+    }
+    this.value = state.append(value);
   }
 }
 
@@ -74,7 +79,7 @@ class Providers extends _$Providers with AutoDisposeNotifierMixin {
   }
 
   Future<void> syncProviders() async {
-    value = await coreController.getExternalProviders();
+    value = await ref.read(coreHandlerProvider).getExternalProviders();
   }
 }
 
@@ -99,11 +104,14 @@ class SystemBrightness extends _$SystemBrightness
 class Traffics extends _$Traffics with AutoDisposeNotifierMixin {
   @override
   FixedList<Traffic> build() {
-    return FixedList(0);
+    return FixedList(trafficSampleLength);
   }
 
   void addTraffic(Traffic value) {
-    this.value = state.copyWith()..add(value);
+    if (!ref.mounted) {
+      return;
+    }
+    this.value = state.append(value);
   }
 
   void clear() {
@@ -116,6 +124,14 @@ class TotalTraffic extends _$TotalTraffic with AutoDisposeNotifierMixin {
   @override
   Traffic build() {
     return const Traffic();
+  }
+}
+
+@Riverpod(keepAlive: true)
+class LoadedLocale extends _$LoadedLocale with AutoDisposeNotifierMixin {
+  @override
+  Locale? build() {
+    return null;
   }
 }
 
@@ -158,7 +174,7 @@ double viewWidth(Ref ref) {
 
 @Riverpod(keepAlive: true)
 ViewMode viewMode(Ref ref) {
-  return utils.getViewMode(ref.watch(viewWidthProvider));
+  return getViewMode(ref.watch(viewWidthProvider));
 }
 
 @Riverpod(keepAlive: true)
@@ -217,22 +233,6 @@ class CheckIpNum extends _$CheckIpNum with AutoDisposeNotifierMixin {
 }
 
 @Riverpod(keepAlive: true)
-class BackBlock extends _$BackBlock with AutoDisposeNotifierMixin {
-  @override
-  bool build() {
-    return false;
-  }
-
-  void backBlock() {
-    value = true;
-  }
-
-  void unBackBlock() {
-    value = false;
-  }
-}
-
-@Riverpod(keepAlive: true)
 class Version extends _$Version with AutoDisposeNotifierMixin {
   @override
   int build() {
@@ -268,6 +268,60 @@ class DelayDataSource extends _$DelayDataSource with AutoDisposeNotifierMixin {
 }
 
 @Riverpod(keepAlive: true)
+class PendingDelayTests extends _$PendingDelayTests
+    with AutoDisposeNotifierMixin {
+  final Map<String, int> _counts = {};
+
+  @override
+  Set<String> build() {
+    return const <String>{};
+  }
+
+  void acquire(Iterable<String> keys) {
+    var added = false;
+    for (final key in keys) {
+      final count = _counts[key] ?? 0;
+      _counts[key] = count + 1;
+      added |= count == 0;
+    }
+    if (added) {
+      _publish();
+    }
+  }
+
+  void release(Iterable<String> keys) {
+    var removed = false;
+    for (final key in keys) {
+      final count = _counts[key];
+      if (count == null) {
+        continue;
+      }
+      if (count > 1) {
+        _counts[key] = count - 1;
+        continue;
+      }
+      _counts.remove(key);
+      removed = true;
+    }
+    if (removed) {
+      _publish();
+    }
+  }
+
+  void clear() {
+    if (_counts.isEmpty) {
+      return;
+    }
+    _counts.clear();
+    _publish();
+  }
+
+  void _publish() {
+    value = Set.unmodifiable(_counts.keys);
+  }
+}
+
+@Riverpod(keepAlive: true)
 class SystemUiOverlayStyleState extends _$SystemUiOverlayStyleState
     with AutoDisposeNotifierMixin {
   @override
@@ -299,6 +353,9 @@ class Loading extends _$Loading with AutoDisposeNotifierMixin {
 
   @override
   bool build(LoadingTag tag) {
+    ref.onDispose(() {
+      _timer?.cancel();
+    });
     return false;
   }
 
@@ -346,12 +403,73 @@ class Item extends _$Item with AutoDisposeNotifierMixin {
   }
 }
 
-@riverpod
-class IsUpdating extends _$IsUpdating with AutoDisposeNotifierMixin {
+@Riverpod(keepAlive: true)
+class UpdatingKeys extends _$UpdatingKeys {
+  final _operations = <String, Set<int>>{};
+  final _scopes = <String, UpdatingScope>{};
+  int _operation = 0;
+
   @override
-  bool build(String name) {
-    return false;
+  Set<String> build() {
+    ref.listen(coreStatusProvider, (_, next) {
+      if (next != CoreStatus.connected) {
+        _discardScope(UpdatingScope.core);
+      }
+    });
+    return const <String>{};
   }
+
+  int start(String key, {UpdatingScope scope = UpdatingScope.local}) {
+    final operation = ++_operation;
+    _operations.putIfAbsent(key, () => <int>{}).add(operation);
+    _scopes[key] = scope;
+    if (!state.contains(key)) {
+      state = {...state, key};
+    }
+    return operation;
+  }
+
+  void stop(String key, int operation) {
+    final operations = _operations[key];
+    if (operations == null) {
+      return;
+    }
+    operations.remove(operation);
+    if (operations.isNotEmpty) {
+      return;
+    }
+    _discard([key]);
+  }
+
+  void stopKeys(Iterable<String> keys) {
+    _discard(keys.toList());
+  }
+
+  UpdatingScope? scopeOf(String key) => _scopes[key];
+
+  void _discardScope(UpdatingScope scope) {
+    _discard(state.where((key) => _scopes[key] == scope).toList());
+  }
+
+  void _discard(List<String> keys) {
+    if (keys.isEmpty) {
+      return;
+    }
+    for (final key in keys) {
+      _operations.remove(key);
+      _scopes.remove(key);
+    }
+    final next = state.where((key) => !keys.contains(key)).toSet();
+    if (next.length == state.length) {
+      return;
+    }
+    state = next;
+  }
+}
+
+@riverpod
+bool isUpdating(Ref ref, String name) {
+  return ref.watch(updatingKeysProvider).contains(name);
 }
 
 @Riverpod(keepAlive: true)
@@ -463,7 +581,6 @@ class LocationPermissions extends _$LocationPermissions
 List<Override> buildAppStateOverrides(AppState appState) {
   return [
     initProvider.overrideWithBuild((_, _) => appState.isInit),
-    backBlockProvider.overrideWithBuild((_, _) => appState.backBlock),
     currentPageLabelProvider.overrideWithBuild((_, _) => appState.pageLabel),
     packagesProvider.overrideWithBuild((_, _) => appState.packages),
     sortNumProvider.overrideWithBuild((_, _) => appState.sortNum),
@@ -481,7 +598,9 @@ List<Override> buildAppStateOverrides(AppState appState) {
     logsProvider.overrideWithBuild((_, _) => appState.logs),
     trafficsProvider.overrideWithBuild((_, _) => appState.traffics),
     totalTrafficProvider.overrideWithBuild((_, _) => appState.totalTraffic),
-    realTunEnableProvider.overrideWithBuild((_, _) => appState.realTunEnable),
+    authorizedTunEnableProvider.overrideWithBuild(
+      (_, _) => appState.authorizedTunEnable,
+    ),
     systemUiOverlayStyleStateProvider.overrideWithBuild(
       (_, _) => appState.systemUiOverlayStyle,
     ),
