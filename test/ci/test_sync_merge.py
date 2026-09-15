@@ -14,7 +14,7 @@ class SyncMergeTest(unittest.TestCase):
         workflow = WORKFLOW.read_text()
         blocks = workflow.split('            previous_head=')[1:]
         self.assertEqual(len(blocks), 2)
-        for block in blocks:
+        for index, block in enumerate(blocks):
             script = textwrap.dedent('            previous_head=' + block.split('            git commit --no-edit')[0])
             with tempfile.TemporaryDirectory(prefix='flclash-merge-test-') as folder:
                 root = pathlib.Path(folder)
@@ -30,19 +30,26 @@ class SyncMergeTest(unittest.TestCase):
                 git('init', '-b', 'main')
                 git('config', 'user.name', 'CI test')
                 git('config', 'user.email', 'test@example.invalid')
-                write('.github/workflows/test.yml', 'base\n')
+                owned = ['build-special-android.yml', 'sync-special.yml']
+                for name in owned:
+                    write(f'.github/workflows/{name}', 'base\n')
+                write('.github/workflows/build.yaml', 'base\n')
                 write('source.txt', 'base\n')
                 git('add', '.')
                 git('commit', '-m', 'base')
                 git('switch', '-c', 'source/main')
-                write('.github/workflows/test.yml', 'upstream\n')
+                for name in owned:
+                    write(f'.github/workflows/{name}', 'upstream\n')
+                write('.github/workflows/build.yaml', 'upstream\n')
+                write('.github/workflows/upstream-only.yml', 'new workflow\n')
                 write('upstream.txt', 'new upstream feature\n')
                 if source_conflict:
                     write('source.txt', 'upstream\n')
                 git('add', '.')
                 git('commit', '-m', 'upstream')
                 git('switch', 'main')
-                write('.github/workflows/test.yml', 'special edition\n')
+                for name in owned:
+                    write(f'.github/workflows/{name}', 'special edition\n')
                 if source_conflict:
                     write('source.txt', 'special edition\n')
                 git('add', '.')
@@ -56,7 +63,11 @@ class SyncMergeTest(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(git('diff', '--name-only', '--diff-filter=U').stdout, '')
                     self.assertEqual((root / 'upstream.txt').read_text(), 'new upstream feature\n')
-                self.assertEqual((root / '.github/workflows/test.yml').read_text(), 'special edition\n')
+                    expected = 'base\n' if index == 0 else 'upstream\n'
+                    self.assertEqual((root / '.github/workflows/build.yaml').read_text(), expected)
+                    self.assertEqual((root / '.github/workflows/upstream-only.yml').exists(), index == 1)
+                for name in owned:
+                    self.assertEqual((root / f'.github/workflows/{name}').read_text(), 'special edition\n')
                 if source_conflict:
                     self.assertIn('source.txt', git('diff', '--name-only', '--diff-filter=U').stdout)
 

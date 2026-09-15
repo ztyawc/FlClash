@@ -19,6 +19,10 @@ on:
         description: Git ref to build
         required: false
         type: string
+      publish:
+        description: Publish the verified APKs
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -112,6 +116,9 @@ jobs:
       - name: Set up Rust for Android
         run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
+      - name: Set up libclang for Rust bindings
+        run: bash tool/setup_libclang.sh
+
       - name: Validate Go wrapper
         working-directory: core
         env:
@@ -165,6 +172,7 @@ jobs:
           retention-days: 90
 
       - name: Create or refresh the prerelease
+        if: toJSON(inputs.publish) != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

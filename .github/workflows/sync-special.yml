@@ -131,6 +131,9 @@ jobs:
       - name: Set up Rust for Android
         run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
+      - name: Set up libclang for Rust bindings
+        run: bash tool/setup_libclang.sh
+
       - name: Set up Android NDK
         id: setup-ndk
         uses: nttld/setup-ndk@v1
@@ -155,12 +158,12 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             previous_head="$(git rev-parse HEAD)"
-            # Workflow files are owned by this fork, including during conflicts.
-            # Other merge errors and source-code conflicts must still stop the sync.
+            # Only special-edition workflows belong to this fork; build.yaml follows upstream.
             if ! git merge --no-commit --no-ff source/main; then
               git rev-parse --verify MERGE_HEAD >/dev/null || exit 1
             fi
-            git restore --source="$previous_head" --staged --worktree -- .github/workflows
+            git restore --source="$previous_head" --staged --worktree -- \
+              .github/workflows/build-special-android.yml .github/workflows/sync-special.yml
             if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
               git diff --name-only --diff-filter=U
               echo "::error::Upstream source conflicts require manual adaptation."
@@ -177,7 +180,7 @@ jobs:
           git submodule sync -- core/Clash.Meta
           git submodule update --init core/Clash.Meta
           git -C core/Clash.Meta fetch --no-tags origin core-mihomo
-          core_sha="$(git -C core/Clash.Meta rev-parse FETCH_HEAD)"
+          core_sha="${{ needs.sync-core.outputs.commit }}"
           git -C core/Clash.Meta checkout --detach "$core_sha"
 
       - name: Refresh dependencies
