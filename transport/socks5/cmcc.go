@@ -31,7 +31,7 @@ var cmccAuthMethod82FixedData = [...]byte{
 // CMCC education accelerator. rw must obfuscate every client-to-server write
 // with XOR 0xff and leave reads untouched; NewCMCCConn provides those semantics.
 func ClientHandshakeCMCC(rw io.ReadWriter, addr Addr, command Command, user *User, method byte) (Addr, error) {
-	if err := validateCMCCUser(user); err != nil {
+	if err := ValidateCMCCUser(user); err != nil {
 		return nil, err
 	}
 	if method != CMCCAuthMethod80 && method != CMCCAuthMethod82 {
@@ -113,18 +113,19 @@ func ClientHandshakeCMCC(rw io.ReadWriter, addr Addr, command Command, user *Use
 	return ReadAddr(rw, response)
 }
 
-func validateCMCCUser(user *User) error {
+// ValidateCMCCUser reports whether user can authenticate with the CMCC methods.
+func ValidateCMCCUser(user *User) error {
 	if user == nil {
 		return ErrAuth
 	}
 	if len(user.Username) == 0 {
-		return errors.New("CMCC SOCKS5 username is required")
+		return errors.New("CMCC SOCKS5 requires a username")
 	}
 	if len(user.Username) > MaxAuthLen {
 		return fmt.Errorf("CMCC SOCKS5 username is too long: %d bytes", len(user.Username))
 	}
 	if len(user.Password) == 0 {
-		return errors.New("CMCC SOCKS5 password is required")
+		return errors.New("CMCC SOCKS5 requires a password")
 	}
 	return nil
 }

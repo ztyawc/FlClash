@@ -190,8 +190,7 @@ func NewSocks5(option Socks5Option) (*Socks5, error) {
 		return nil, err
 	}
 	if cmccAuthMethod != 0 {
-		user := &socks5.User{Username: option.UserName, Password: option.Password}
-		if err = validateCMCCCredentials(user); err != nil {
+		if err = socks5.ValidateCMCCUser(&socks5.User{Username: option.UserName, Password: option.Password}); err != nil {
 			return nil, err
 		}
 	}
