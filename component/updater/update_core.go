@@ -81,6 +81,9 @@ func (u *CoreUpdater) CoreBaseName() string {
 }
 
 func (u *CoreUpdater) Update(currentExePath string, channel string, force bool) (err error) {
+	if err = checkCoreUpdateAllowed(); err != nil {
+		return err
+	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
