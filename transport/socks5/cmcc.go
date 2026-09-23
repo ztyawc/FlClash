@@ -55,14 +55,22 @@ func ClientHandshakeCMCC(rw io.ReadWriter, addr Addr, command Command, user *Use
 		}
 		challenge = response[1:2]
 	case CMCCAuthMethod82:
+		// Check VER/METHOD before waiting for the challenge: a server rejecting
+		// 0x82 sends only [5, 0xff] and may keep the connection open.
 		response := make([]byte, 6)
-		if _, err := io.ReadFull(rw, response); err != nil {
-			return nil, fmt.Errorf("read CMCC 0x82 challenge: %w", err)
+		if _, err := io.ReadFull(rw, response[:2]); err != nil {
+			return nil, fmt.Errorf("read CMCC 0x82 method response: %w", err)
+		}
+		if response[0] == Version && response[1] == 0xff {
+			return nil, errors.New("CMCC SOCKS5 server rejected authentication method 0x82")
 		}
 		if response[0] != Version || response[1] != method {
 			return nil, fmt.Errorf("unexpected CMCC 0x82 method response: %x", response[:2])
 		}
-		challenge = response[2:6]
+		if _, err := io.ReadFull(rw, response[2:]); err != nil {
+			return nil, fmt.Errorf("read CMCC 0x82 challenge: %w", err)
+		}
+		challenge = response[2:]
 	}
 
 	authRequest := buildCMCCAuthRequest(user, method, challenge)

@@ -249,3 +249,34 @@ func TestClientHandshakeCMCCValidatesInputBeforeWriting(t *testing.T) {
 		})
 	}
 }
+
+func TestClientHandshakeCMCC82RejectedMethodFailsFast(t *testing.T) {
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+	t.Cleanup(func() { _ = server.Close() })
+	go func() {
+		// Reject the method and keep the connection open, as RFC 1928 leaves
+		// closing it to the client.
+		_, _ = io.ReadFull(server, make([]byte, 3))
+		_, _ = server.Write([]byte{5, 0xff})
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	user := &User{Username: testCMCCUsername, Password: testCMCCPassword}
+	_, err := ClientHandshakeCMCC(NewCMCCConn(client), ParseAddr("example.com:80"), CmdConnect, user, CMCCAuthMethod82)
+	require.ErrorContains(t, err, "rejected authentication method 0x82")
+}
+
+func TestClientHandshakeCMCCAuthRejected(t *testing.T) {
+	rawConn := newMemoryConn([]byte{5, 0x42, 1, 1})
+	user := &User{Username: testCMCCUsername, Password: testCMCCPassword}
+	_, err := ClientHandshakeCMCC(NewCMCCConn(rawConn), ParseAddr("example.com:80"), CmdConnect, user, CMCCAuthMethod80)
+	require.ErrorContains(t, err, "CMCC authentication rejected")
+}
+
+func TestClientHandshakeCMCCReplyError(t *testing.T) {
+	rawConn := newMemoryConn([]byte{5, 0x42, 1, 0, 5, byte(ErrConnectionRefused), 0})
+	user := &User{Username: testCMCCUsername, Password: testCMCCPassword}
+	_, err := ClientHandshakeCMCC(NewCMCCConn(rawConn), ParseAddr("example.com:80"), CmdConnect, user, CMCCAuthMethod80)
+	require.ErrorIs(t, err, ErrConnectionRefused)
+}
