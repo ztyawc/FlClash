@@ -1,9 +1,11 @@
 package socks5
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -166,9 +168,13 @@ func writeFull(w io.Writer, payload []byte) error {
 	return nil
 }
 
+// xorFFBlock lets xorFF use the SIMD-accelerated crypto/subtle.XORBytes.
+var xorFFBlock = bytes.Repeat([]byte{0xff}, 4096)
+
 func xorFF(dst, src []byte) {
-	for i, value := range src {
-		dst[i] = value ^ 0xff
+	for len(src) > 0 {
+		n := subtle.XORBytes(dst, src, xorFFBlock)
+		dst, src = dst[n:], src[n:]
 	}
 }
 
@@ -230,5 +236,7 @@ func (c *cmccPacketConn) WriteTo(payload []byte, addr net.Addr) (int, error) {
 	return c.PacketConn.WriteTo(packet, addr)
 }
 
-var _ N.ExtendedConn = (*cmccConn)(nil)
-var _ net.PacketConn = (*cmccPacketConn)(nil)
+var (
+	_ N.ExtendedConn = (*cmccConn)(nil)
+	_ net.PacketConn = (*cmccPacketConn)(nil)
+)

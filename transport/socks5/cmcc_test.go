@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -226,6 +227,36 @@ func TestWriteFullHandlesShortWrites(t *testing.T) {
 	payload := []byte("0123456789")
 	require.NoError(t, writeFull(writer, payload))
 	require.Equal(t, payload, writer.buf.Bytes())
+}
+
+func TestXORFFAcrossBlockBoundaries(t *testing.T) {
+	for _, size := range []int{0, 1, 7, 8, 4095, 4096, 4097, 3*4096 + 5} {
+		src := make([]byte, size)
+		expected := make([]byte, size)
+		for i := range src {
+			src[i] = byte(i * 7)
+			expected[i] = ^src[i]
+		}
+
+		dst := make([]byte, size)
+		xorFF(dst, src)
+		require.Equal(t, expected, dst, "size %d", size)
+
+		xorFF(src, src)
+		require.Equal(t, expected, src, "in-place size %d", size)
+	}
+}
+
+func BenchmarkXORFF(b *testing.B) {
+	for _, size := range []int{1500, 32 * 1024} {
+		payload := make([]byte, size)
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			b.SetBytes(int64(size))
+			for i := 0; i < b.N; i++ {
+				xorFF(payload, payload)
+			}
+		})
+	}
 }
 
 func TestClientHandshakeCMCCValidatesInputBeforeWriting(t *testing.T) {
