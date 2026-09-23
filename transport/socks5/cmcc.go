@@ -1,9 +1,11 @@
 package socks5
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -29,7 +31,7 @@ var cmccAuthMethod82FixedData = [...]byte{
 // CMCC education accelerator. rw must obfuscate every client-to-server write
 // with XOR 0xff and leave reads untouched; NewCMCCConn provides those semantics.
 func ClientHandshakeCMCC(rw io.ReadWriter, addr Addr, command Command, user *User, method byte) (Addr, error) {
-	if err := validateCMCCUser(user); err != nil {
+	if err := ValidateCMCCUser(user); err != nil {
 		return nil, err
 	}
 	if method != CMCCAuthMethod80 && method != CMCCAuthMethod82 {
@@ -55,14 +57,22 @@ func ClientHandshakeCMCC(rw io.ReadWriter, addr Addr, command Command, user *Use
 		}
 		challenge = response[1:2]
 	case CMCCAuthMethod82:
+		// Check VER/METHOD before waiting for the challenge: a server rejecting
+		// 0x82 sends only [5, 0xff] and may keep the connection open.
 		response := make([]byte, 6)
-		if _, err := io.ReadFull(rw, response); err != nil {
-			return nil, fmt.Errorf("read CMCC 0x82 challenge: %w", err)
+		if _, err := io.ReadFull(rw, response[:2]); err != nil {
+			return nil, fmt.Errorf("read CMCC 0x82 method response: %w", err)
+		}
+		if response[0] == Version && response[1] == 0xff {
+			return nil, errors.New("CMCC SOCKS5 server rejected authentication method 0x82")
 		}
 		if response[0] != Version || response[1] != method {
 			return nil, fmt.Errorf("unexpected CMCC 0x82 method response: %x", response[:2])
 		}
-		challenge = response[2:6]
+		if _, err := io.ReadFull(rw, response[2:]); err != nil {
+			return nil, fmt.Errorf("read CMCC 0x82 challenge: %w", err)
+		}
+		challenge = response[2:]
 	}
 
 	authRequest := buildCMCCAuthRequest(user, method, challenge)
@@ -103,18 +113,19 @@ func ClientHandshakeCMCC(rw io.ReadWriter, addr Addr, command Command, user *Use
 	return ReadAddr(rw, response)
 }
 
-func validateCMCCUser(user *User) error {
+// ValidateCMCCUser reports whether user can authenticate with the CMCC methods.
+func ValidateCMCCUser(user *User) error {
 	if user == nil {
 		return ErrAuth
 	}
 	if len(user.Username) == 0 {
-		return errors.New("CMCC SOCKS5 username is required")
+		return errors.New("CMCC SOCKS5 requires a username")
 	}
 	if len(user.Username) > MaxAuthLen {
 		return fmt.Errorf("CMCC SOCKS5 username is too long: %d bytes", len(user.Username))
 	}
 	if len(user.Password) == 0 {
-		return errors.New("CMCC SOCKS5 password is required")
+		return errors.New("CMCC SOCKS5 requires a password")
 	}
 	return nil
 }
@@ -158,9 +169,13 @@ func writeFull(w io.Writer, payload []byte) error {
 	return nil
 }
 
+// xorFFBlock lets xorFF use the SIMD-accelerated crypto/subtle.XORBytes.
+var xorFFBlock = bytes.Repeat([]byte{0xff}, 4096)
+
 func xorFF(dst, src []byte) {
-	for i, value := range src {
-		dst[i] = value ^ 0xff
+	for len(src) > 0 {
+		n := subtle.XORBytes(dst, src, xorFFBlock)
+		dst, src = dst[n:], src[n:]
 	}
 }
 
@@ -222,5 +237,7 @@ func (c *cmccPacketConn) WriteTo(payload []byte, addr net.Addr) (int, error) {
 	return c.PacketConn.WriteTo(packet, addr)
 }
 
-var _ N.ExtendedConn = (*cmccConn)(nil)
-var _ net.PacketConn = (*cmccPacketConn)(nil)
+var (
+	_ N.ExtendedConn = (*cmccConn)(nil)
+	_ net.PacketConn = (*cmccPacketConn)(nil)
+)

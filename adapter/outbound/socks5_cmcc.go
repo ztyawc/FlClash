@@ -19,16 +19,3 @@ func parseCMCCAuthMethod(value string) (byte, error) {
 		return 0, fmt.Errorf("unsupported cmcc-auth-method %q; expected 0x80 or 0x82", value)
 	}
 }
-
-func validateCMCCCredentials(user *socks5.User) error {
-	if user.Username == "" {
-		return fmt.Errorf("cmcc-auth-method requires a username")
-	}
-	if len(user.Username) > socks5.MaxAuthLen {
-		return fmt.Errorf("CMCC SOCKS5 username is too long: %d bytes", len(user.Username))
-	}
-	if user.Password == "" {
-		return fmt.Errorf("cmcc-auth-method requires a password")
-	}
-	return nil
-}

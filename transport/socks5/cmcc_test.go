@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -228,6 +229,36 @@ func TestWriteFullHandlesShortWrites(t *testing.T) {
 	require.Equal(t, payload, writer.buf.Bytes())
 }
 
+func TestXORFFAcrossBlockBoundaries(t *testing.T) {
+	for _, size := range []int{0, 1, 7, 8, 4095, 4096, 4097, 3*4096 + 5} {
+		src := make([]byte, size)
+		expected := make([]byte, size)
+		for i := range src {
+			src[i] = byte(i * 7)
+			expected[i] = ^src[i]
+		}
+
+		dst := make([]byte, size)
+		xorFF(dst, src)
+		require.Equal(t, expected, dst, "size %d", size)
+
+		xorFF(src, src)
+		require.Equal(t, expected, src, "in-place size %d", size)
+	}
+}
+
+func BenchmarkXORFF(b *testing.B) {
+	for _, size := range []int{1500, 32 * 1024} {
+		payload := make([]byte, size)
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			b.SetBytes(int64(size))
+			for i := 0; i < b.N; i++ {
+				xorFF(payload, payload)
+			}
+		})
+	}
+}
+
 func TestClientHandshakeCMCCValidatesInputBeforeWriting(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
@@ -248,4 +279,35 @@ func TestClientHandshakeCMCCValidatesInputBeforeWriting(t *testing.T) {
 			require.Empty(t, rawConn.writes.Bytes())
 		})
 	}
+}
+
+func TestClientHandshakeCMCC82RejectedMethodFailsFast(t *testing.T) {
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+	t.Cleanup(func() { _ = server.Close() })
+	go func() {
+		// Reject the method and keep the connection open, as RFC 1928 leaves
+		// closing it to the client.
+		_, _ = io.ReadFull(server, make([]byte, 3))
+		_, _ = server.Write([]byte{5, 0xff})
+	}()
+	require.NoError(t, client.SetDeadline(time.Now().Add(2*time.Second)))
+
+	user := &User{Username: testCMCCUsername, Password: testCMCCPassword}
+	_, err := ClientHandshakeCMCC(NewCMCCConn(client), ParseAddr("example.com:80"), CmdConnect, user, CMCCAuthMethod82)
+	require.ErrorContains(t, err, "rejected authentication method 0x82")
+}
+
+func TestClientHandshakeCMCCAuthRejected(t *testing.T) {
+	rawConn := newMemoryConn([]byte{5, 0x42, 1, 1})
+	user := &User{Username: testCMCCUsername, Password: testCMCCPassword}
+	_, err := ClientHandshakeCMCC(NewCMCCConn(rawConn), ParseAddr("example.com:80"), CmdConnect, user, CMCCAuthMethod80)
+	require.ErrorContains(t, err, "CMCC authentication rejected")
+}
+
+func TestClientHandshakeCMCCReplyError(t *testing.T) {
+	rawConn := newMemoryConn([]byte{5, 0x42, 1, 0, 5, byte(ErrConnectionRefused), 0})
+	user := &User{Username: testCMCCUsername, Password: testCMCCPassword}
+	_, err := ClientHandshakeCMCC(NewCMCCConn(rawConn), ParseAddr("example.com:80"), CmdConnect, user, CMCCAuthMethod80)
+	require.ErrorIs(t, err, ErrConnectionRefused)
 }
