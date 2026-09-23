@@ -4,10 +4,13 @@ on:
   push:
     branches:
       - main
+    # Docs- and CI-only commits produce identical kernels; run the workflow
+    # manually (optionally with force) when a CI change needs a new build.
     paths-ignore:
       - "docs/**"
-      - "README.md"
+      - "**.md"
       - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/**"
   workflow_dispatch:
     inputs:
       force:
@@ -62,6 +65,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+
+          # The upstream sync merges without tags, so fetch the upstream
+          # release tags to label builds with their real base version.
+          if ! git fetch --quiet https://github.com/MetaCubeX/mihomo.git '+refs/tags/v*:refs/tags/v*'; then
+            echo "::warning title=Upstream tags unavailable::The version label falls back to this repository's tags."
+          fi
 
           target_sha="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=12 HEAD)"
@@ -285,7 +294,7 @@ jobs:
             "$android_asset" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$TARGET_SHA" \
-            --title "CMCC Mihomo $VERSION" \
+            --title "CMCC Kernel $VERSION" \
             --notes-file "$notes_file" \
             --latest
 

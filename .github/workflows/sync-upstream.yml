@@ -107,6 +107,7 @@ jobs:
       - name: Test the merged tree
         if: steps.merge.outputs.changed == 'true'
         env:
+          GOTOOLCHAIN: local
           SKIP_CONCURRENT_TEST: "1"
           SKIP_INTEROP_TEST: "1"
         run: |
