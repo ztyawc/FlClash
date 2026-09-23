@@ -35,6 +35,17 @@ The latest pair is available from the repository's
 contains the embedded version, source commit, and SHA-256 checksums. GitHub also
 shows its automatically generated source archives; those are not kernel builds.
 
+The embedded version is `<upstream release tag>-cmcc.<commit>`, for example
+`v1.19.31-cmcc.0123456789ab`. Pushes that only touch Markdown, `docs/` or
+workflow files do not publish a release because the kernels would be identical;
+run the workflow manually (with `force` to replace an existing release) when a
+CI change needs a fresh build.
+
+The built-in core upgrade (`POST /upgrade`, the "Upgrade Core" button in
+dashboards) is disabled in these kernels. It would otherwise replace them with
+an official build that lacks CMCC support. Download new kernels from the
+Releases page instead; UI and GEO database updates still work.
+
 ## Upstream maintenance
 
 MetaCubeX develops and releases mihomo from its `Alpha` branch. This fork keeps
@@ -43,18 +54,25 @@ the private protocol changes on top of `upstream/Alpha`.
 
 The fork's `main` branch is the maintenance and default branch, based on
 upstream `Alpha`. The `Sync upstream Alpha` workflow
-checks for updates every day, merges them, runs the full test suite plus
+checks for updates on the first day of every month (or when run manually),
+merges them, runs the full test suite plus
 Windows amd64-v1 and Android arm64-v8 builds, and pushes only when every check
 succeeds. Merge conflicts or test/build failures stop the workflow without
 modifying the remote branch. After a successful synchronization, the release
 workflow builds and publishes the new two-kernel pair from the latest `main`.
+
+The Actions token cannot push workflow files, so the automated merge keeps this
+fork's `.github/workflows` and lists any skipped upstream workflow changes in the
+run summary. The test suite includes an in-process CMCC server that drives the
+socks5 outbound end to end, so a merge that breaks the CMCC data path fails
+before anything is pushed.
 
 Manual synchronization uses the same safe merge flow:
 
 ```shell
 git fetch upstream Alpha
 git merge --no-edit upstream/Alpha
-go test ./transport/socks5 ./adapter/outbound
+go test ./transport/socks5 ./adapter/outbound ./component/updater
 git push origin HEAD:main
 ```
 
