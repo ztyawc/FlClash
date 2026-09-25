@@ -1,0 +1,42 @@
+name: Test QyProxy and CMCC
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: local
+      SKIP_CONCURRENT_TEST: "1"
+      SKIP_INTEROP_TEST: "1"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.26"
+          cache: true
+      - name: Test
+        run: go test ./...
+      - name: Test QyProxy and CMCC with gVisor
+        run: go test -tags with_gvisor ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./component/updater
+      - name: Build Windows amd64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+          GOAMD64: v1
+        run: go build -tags with_gvisor -trimpath -o "$RUNNER_TEMP/mihomo-cn2.exe" .
