@@ -67,8 +67,8 @@ func (m *Manager) Range(f func(c Tracker) bool) {
 	})
 }
 
-func (m *Manager) PushUploaded(lastChain string, size int64) {
-	if lastChain != "DIRECT" {
+func (m *Manager) PushUploaded(direct bool, size int64) {
+	if !direct {
 		m.proxyUploadTemp.Add(size)
 		m.proxyUploadTotal.Add(size)
 	}
@@ -76,8 +76,8 @@ func (m *Manager) PushUploaded(lastChain string, size int64) {
 	m.uploadTotal.Add(size)
 }
 
-func (m *Manager) PushDownloaded(lastChain string, size int64) {
-	if lastChain != "DIRECT" {
+func (m *Manager) PushDownloaded(direct bool, size int64) {
+	if !direct {
 		m.proxyDownloadTemp.Add(size)
 		m.proxyDownloadTotal.Add(size)
 	}
