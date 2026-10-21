@@ -32,8 +32,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.47.1"
-  GO_VERSION: "1.26.4"
+  FLUTTER_VERSION: "3.47.6"
+  GO_VERSION: "1.27.1"
 
 jobs:
   release-state:
@@ -83,6 +83,9 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           submodules: recursive
 
+      - name: Test special-edition workflows
+        run: python3 -B -m unittest discover -s test/ci -v
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -114,7 +117,9 @@ jobs:
         run: flutter pub get
 
       - name: Set up Rust for Android
-        run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+        run: |
+          rust_version="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("plugins/rust_api/rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')"
+          rustup toolchain install "$rust_version" --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
       - name: Set up libclang for Rust bindings
         run: bash tool/setup_libclang.sh
@@ -150,12 +155,16 @@ jobs:
           fi
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$aapt"
+          native_libraries=(libclash.so librust_api.so)
+          if [[ -f android/core/src/main/cpp/core.cpp ]]; then
+            native_libraries+=(libcore.so)
+          fi
           for apk in "${apks[@]}"; do
             badging="$("$aapt" dump badging "$apk")"
             grep -F "package: name='com.follow.clash.dev'" <<< "$badging"
             grep -F "application-label:'FlClash（特供版）'" <<< "$badging"
             libraries="$(unzip -Z1 "$apk")"
-            for library in libclash.so libcore.so librust_api.so; do
+            for library in "${native_libraries[@]}"; do
               grep -E "^lib/(arm64-v8a|armeabi-v7a|x86_64)/${library//./\\.}$" <<< "$libraries"
             done
           done
@@ -188,7 +197,8 @@ jobs:
             printf 'FlClash（特供版）自动构建。\n\n'
             printf -- '- 应用 ID：`com.follow.clash.dev`，可与官方版共存\n'
             printf -- '- FlClash：`%s`\n' "$commit_sha"
-            printf -- '- mihomo 内核：`%s`\n' "$core_sha"
+            printf -- '- mihomo-cn2 内核：`%s`\n' "$core_sha"
+            printf -- '- 内核来源：ztyawc/mihomo-cn2，包含 FlClash 接口适配\n'
             printf -- '- 签名：CI 自动生成的 debug 签名，不需要私人 keystore\n\n'
             printf '不同构建的 debug 证书可能不同；若覆盖安装失败，请先卸载旧特供版。\n'
           } > "$notes"

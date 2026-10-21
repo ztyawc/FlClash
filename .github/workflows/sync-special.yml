@@ -1,6 +1,13 @@
 name: Sync special edition
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/sync-special.yml
+      - .github/workflows/build-special-android.yml
+      - test/ci/**
   schedule:
     - cron: "37 20 * * *"
   workflow_dispatch:
@@ -13,8 +20,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.47.1"
-  GO_VERSION: "1.26.4"
+  FLUTTER_VERSION: "3.47.6"
+  GO_VERSION: "1.27.1"
 
 jobs:
   sync-core:
@@ -23,6 +30,7 @@ jobs:
     outputs:
       changed: ${{ steps.core-state.outputs.changed }}
       commit: ${{ steps.core-state.outputs.commit }}
+      app-commit: ${{ steps.core-state.outputs.app-commit }}
     steps:
       - name: Check out the maintained core branch
         uses: actions/checkout@v4
@@ -30,7 +38,7 @@ jobs:
           fetch-depth: 0
           path: mihomo
           persist-credentials: false
-          ref: core-mihomo
+          ref: core-cn2
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -38,7 +46,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: mihomo/go.sum
 
-      - name: Merge the read-only mihomo source
+      - name: Merge CN2 and the matching FlClash API
         id: core-state
         working-directory: mihomo
         shell: bash
@@ -48,28 +56,56 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://github.com/ztyawc/FlClash.git
           git remote remove source 2>/dev/null || true
-          git remote add source https://github.com/ztyawc/mihomo.git
+          git remote add source https://github.com/ztyawc/mihomo-cn2.git
           git fetch --no-tags source main:refs/remotes/source/main
-
-          if git merge-base --is-ancestor source/main HEAD; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
+          changed=false
+          imported_revision="$(cat .cn2-import)"
+          [[ "$imported_revision" =~ ^[0-9a-f]{40}$ ]]
+          if ! git merge-base --is-ancestor "$imported_revision" HEAD; then
+            # The imported CN2 snapshot has independent history; its adaptations are already in HEAD.
+            git fetch --no-tags source "$imported_revision"
+            git merge --strategy=ours --allow-unrelated-histories --no-edit "$imported_revision"
+            changed=true
+          fi
+          if ! git merge-base --is-ancestor source/main HEAD; then
             previous_head="$(git rev-parse HEAD)"
-            # Workflow files are owned by this fork, including during conflicts.
-            # Other merge errors and source-code conflicts must still stop the sync.
             if ! git merge --no-commit --no-ff source/main; then
               git rev-parse --verify MERGE_HEAD >/dev/null || exit 1
             fi
             git restore --source="$previous_head" --staged --worktree -- .github/workflows
             if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
               git diff --name-only --diff-filter=U
-              echo "::error::Upstream source conflicts require manual adaptation."
+              echo "::error::CN2 source conflicts require manual adaptation."
               exit 1
             fi
             git commit --no-edit
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+            changed=true
           fi
+          git remote remove app-source 2>/dev/null || true
+          git remote add app-source https://github.com/chen08209/FlClash.git
+          git fetch --no-tags app-source main:refs/remotes/app-source/main
+          app_commit="$(git rev-parse app-source/main)"
+          core_revision="$(git ls-tree "$app_commit" core/Clash.Meta | awk '$1 == "160000" { print $3 }')"
+          [[ "$core_revision" =~ ^[0-9a-f]{40}$ ]]
+          previous_api="$(cat .flclash-api)"
+          [[ "$previous_api" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$previous_api" != "$core_revision" ]]; then
+            git fetch --no-tags https://github.com/chen08209/Clash.Meta.git "$previous_api"
+            git fetch --no-tags https://github.com/chen08209/Clash.Meta.git "$core_revision"
+            patch_file="$(mktemp)"
+            trap 'rm -f "$patch_file"' EXIT
+            git diff "$previous_api" "$core_revision" -- '*.go' go.mod go.sum > "$patch_file"
+            if [[ -s "$patch_file" ]]; then
+              git apply --3way --index "$patch_file"
+            fi
+            printf '%s\n' "$core_revision" > .flclash-api
+            git add .flclash-api
+            git commit -m "chore(core): update FlClash API to $core_revision"
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "app-commit=$app_commit" >> "$GITHUB_OUTPUT"
 
       - name: Test the updated core
         if: steps.core-state.outputs.changed == 'true'
@@ -79,7 +115,7 @@ jobs:
           SKIP_INTEROP_TEST: "1"
         run: |
           go test ./...
-          go test -tags with_gvisor ./transport/socks5 ./adapter/outbound
+          go test -tags with_gvisor ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./component/updater
 
       - name: Push the tested core branch
         if: steps.core-state.outputs.changed == 'true'
@@ -88,7 +124,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh auth setup-git
-          git push origin HEAD:core-mihomo
+          git push origin HEAD:core-cn2
 
   sync-app:
     needs: sync-core
@@ -108,6 +144,53 @@ jobs:
 
       - name: Test synchronization conflict handling
         run: python3 -B -m unittest discover -s test/ci -v
+
+      - name: Merge FlClash upstream
+        id: app-merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin https://github.com/ztyawc/FlClash.git
+          git remote remove source 2>/dev/null || true
+          git remote add source https://github.com/chen08209/FlClash.git
+          git fetch --no-tags source "${{ needs.sync-core.outputs.app-commit }}":refs/remotes/source/main
+
+          if git merge-base --is-ancestor source/main HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            previous_head="$(git rev-parse HEAD)"
+            # This fork owns core selection; go mod tidy reconciles dependencies below.
+            if ! git merge --no-commit --no-ff source/main; then
+              git rev-parse --verify MERGE_HEAD >/dev/null || exit 1
+            fi
+            git restore --source="$previous_head" --staged --worktree -- \
+              .github/workflows/build-special-android.yml .github/workflows/sync-special.yml \
+              .gitmodules core/Clash.Meta
+            for manifest in core/go.mod core/go.sum; do
+              if [[ -n "$(git ls-files --unmerged -- "$manifest")" ]]; then
+                git restore --source=source/main --staged --worktree -- "$manifest"
+              fi
+            done
+            if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
+              git diff --name-only --diff-filter=U
+              echo "::error::Upstream source conflicts require manual adaptation."
+              exit 1
+            fi
+            git commit --no-edit
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update the embedded core revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule sync -- core/Clash.Meta
+          git submodule update --init core/Clash.Meta
+          git -C core/Clash.Meta fetch --no-tags origin core-cn2
+          core_sha="${{ needs.sync-core.outputs.commit }}"
+          git -C core/Clash.Meta checkout --detach "$core_sha"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -129,7 +212,9 @@ jobs:
           java-version: "17"
 
       - name: Set up Rust for Android
-        run: rustup toolchain install 1.95.0 --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+        run: |
+          rust_version="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("plugins/rust_api/rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')"
+          rustup toolchain install "$rust_version" --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
       - name: Set up libclang for Rust bindings
         run: bash tool/setup_libclang.sh
@@ -141,47 +226,6 @@ jobs:
           ndk-version: r28c
           add-to-path: true
           link-to-sdk: true
-
-      - name: Merge FlClash upstream
-        id: app-merge
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://github.com/ztyawc/FlClash.git
-          git remote remove source 2>/dev/null || true
-          git remote add source https://github.com/chen08209/FlClash.git
-          git fetch --no-tags source main:refs/remotes/source/main
-
-          if git merge-base --is-ancestor source/main HEAD; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            previous_head="$(git rev-parse HEAD)"
-            # Only special-edition workflows belong to this fork; build.yaml follows upstream.
-            if ! git merge --no-commit --no-ff source/main; then
-              git rev-parse --verify MERGE_HEAD >/dev/null || exit 1
-            fi
-            git restore --source="$previous_head" --staged --worktree -- \
-              .github/workflows/build-special-android.yml .github/workflows/sync-special.yml
-            if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
-              git diff --name-only --diff-filter=U
-              echo "::error::Upstream source conflicts require manual adaptation."
-              exit 1
-            fi
-            git commit --no-edit
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Update the embedded core revision
-        shell: bash
-        run: |
-          set -euo pipefail
-          git submodule sync -- core/Clash.Meta
-          git submodule update --init core/Clash.Meta
-          git -C core/Clash.Meta fetch --no-tags origin core-mihomo
-          core_sha="${{ needs.sync-core.outputs.commit }}"
-          git -C core/Clash.Meta checkout --detach "$core_sha"
 
       - name: Refresh dependencies
         run: |

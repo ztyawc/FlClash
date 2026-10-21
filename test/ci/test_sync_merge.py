@@ -1,4 +1,5 @@
 """Exercise the actual workflow merge blocks against disposable Git repositories."""
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -7,10 +8,13 @@ import unittest
 
 
 WORKFLOW = pathlib.Path(__file__).resolve().parents[2] / '.github/workflows/sync-special.yml'
+CORE_MODULE = '[submodule "core/Clash.Meta"]\n\tpath = core/Clash.Meta\n\turl = {}\n'
 
 
 class SyncMergeTest(unittest.TestCase):
-    def check_merge(self, source_conflict=False, missing_source=False):
+    def check_merge(self, source_conflict=False, missing_source=False,
+                    core_conflict=False, dependency_conflict=False,
+                    upstream_core_only=False):
         workflow = WORKFLOW.read_text()
         blocks = workflow.split('            previous_head=')[1:]
         self.assertEqual(len(blocks), 2)
@@ -27,6 +31,10 @@ class SyncMergeTest(unittest.TestCase):
                     file.parent.mkdir(parents=True, exist_ok=True)
                     file.write_text(value)
 
+                def set_core(revision):
+                    git('update-index', '--add', '--cacheinfo',
+                        f'160000,{revision},core/Clash.Meta')
+
                 git('init', '-b', 'main')
                 git('config', 'user.name', 'CI test')
                 git('config', 'user.email', 'test@example.invalid')
@@ -35,7 +43,13 @@ class SyncMergeTest(unittest.TestCase):
                     write(f'.github/workflows/{name}', 'base\n')
                 write('.github/workflows/build.yaml', 'base\n')
                 write('source.txt', 'base\n')
+                if index == 1:
+                    write('.gitmodules', CORE_MODULE.format('https://example.invalid/base.git'))
+                    write('core/go.mod', 'base dependencies\n')
+                    write('core/go.sum', 'base checksums\n')
                 git('add', '.')
+                if index == 1:
+                    set_core('1' * 40)
                 git('commit', '-m', 'base')
                 git('switch', '-c', 'source/main')
                 for name in owned:
@@ -45,14 +59,28 @@ class SyncMergeTest(unittest.TestCase):
                 write('upstream.txt', 'new upstream feature\n')
                 if source_conflict:
                     write('source.txt', 'upstream\n')
+                if index == 1 and (core_conflict or upstream_core_only):
+                    write('.gitmodules', CORE_MODULE.format('https://example.invalid/upstream.git'))
+                if index == 1 and dependency_conflict:
+                    write('core/go.mod', 'new upstream dependencies and tools\n')
+                    write('core/go.sum', 'new upstream checksums\n')
                 git('add', '.')
+                if index == 1:
+                    set_core(('2' if core_conflict or upstream_core_only else '1') * 40)
                 git('commit', '-m', 'upstream')
                 git('switch', 'main')
                 for name in owned:
                     write(f'.github/workflows/{name}', 'special edition\n')
                 if source_conflict:
                     write('source.txt', 'special edition\n')
+                if index == 1:
+                    write('.gitmodules', CORE_MODULE.format('https://example.invalid/special.git'))
+                    if dependency_conflict:
+                        write('core/go.mod', 'special core dependencies\n')
+                        write('core/go.sum', 'special core checksums\n')
                 git('add', '.')
+                if index == 1:
+                    set_core(('1' if upstream_core_only else '3') * 40)
                 git('commit', '-m', 'special edition')
                 if missing_source:
                     git('branch', '-D', 'source/main')
@@ -66,10 +94,20 @@ class SyncMergeTest(unittest.TestCase):
                     expected = 'base\n' if index == 0 else 'upstream\n'
                     self.assertEqual((root / '.github/workflows/build.yaml').read_text(), expected)
                     self.assertEqual((root / '.github/workflows/upstream-only.yml').exists(), index == 1)
+                    if index == 1:
+                        self.assertEqual((root / '.gitmodules').read_text(),
+                                         CORE_MODULE.format('https://example.invalid/special.git'))
+                        revision = ('1' if upstream_core_only else '3') * 40
+                        self.assertIn(revision, git('ls-files', '--stage', 'core/Clash.Meta').stdout)
+                        if dependency_conflict:
+                            self.assertEqual((root / 'core/go.mod').read_text(),
+                                             'new upstream dependencies and tools\n')
+                            self.assertEqual((root / 'core/go.sum').read_text(),
+                                             'new upstream checksums\n')
                 for name in owned:
                     self.assertEqual((root / f'.github/workflows/{name}').read_text(), 'special edition\n')
                 if source_conflict:
-                    self.assertIn('source.txt', git('diff', '--name-only', '--diff-filter=U').stdout)
+                    self.assertEqual(git('diff', '--name-only', '--diff-filter=U').stdout, 'source.txt\n')
 
     def test_workflow_conflicts_keep_our_workflows(self):
         self.check_merge()
@@ -79,6 +117,87 @@ class SyncMergeTest(unittest.TestCase):
 
     def test_non_conflict_merge_errors_stop_sync(self):
         self.check_merge(missing_source=True)
+
+    def test_core_and_dependency_conflicts_keep_the_maintained_core(self):
+        self.check_merge(core_conflict=True, dependency_conflict=True)
+
+    def test_nonconflicting_upstream_core_changes_keep_the_maintained_core(self):
+        self.check_merge(upstream_core_only=True)
+
+    def test_source_conflicts_still_stop_after_core_conflicts_are_resolved(self):
+        self.check_merge(source_conflict=True, core_conflict=True,
+                         dependency_conflict=True)
+
+    def test_cn2_sync_preserves_protocol_and_uses_the_app_api_pin(self):
+        workflow = WORKFLOW.read_text()
+        step = workflow.split('      - name: Merge CN2 and the matching FlClash API\n', 1)[1]
+        script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0])
+        with tempfile.TemporaryDirectory(prefix='flclash-core-pair-test-') as folder:
+            root = pathlib.Path(folder)
+            source, api, app, working = (root / name for name in ('source', 'api', 'app', 'working'))
+
+            def git(repo, *args):
+                return subprocess.check_output(['git', '-C', str(repo), *args],
+                                               stderr=subprocess.PIPE, text=True).strip()
+
+            def identity(repo):
+                git(repo, 'config', 'user.name', 'CI test')
+                git(repo, 'config', 'user.email', 'test@example.invalid')
+
+            def commit_file(repo, path, value):
+                target = repo / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(value)
+                git(repo, 'add', path)
+                git(repo, 'commit', '-m', path)
+
+            source.mkdir()
+            git(source, 'init', '-b', 'main')
+            identity(source)
+            commit_file(source, '.github/workflows/test.yml', 'base\n')
+            source_pin = git(source, 'rev-parse', 'HEAD')
+            git(root, 'clone', str(source), str(api))
+            working.mkdir()
+            git(working, 'init', '-b', 'main')
+            identity(api)
+            identity(working)
+            git(working, 'config', 'user.email', 'maintained@example.invalid')
+            git(working, 'remote', 'add', 'origin', str(source))
+            commit_file(working, '.github/workflows/test.yml', 'base\n')
+            commit_file(working, '.cn2-import', source_pin + '\n')
+            commit_file(working, '.flclash-api', source_pin + '\n')
+            commit_file(source, 'qyproxy.txt', 'QyProxy CN2 implementation\n')
+            commit_file(api, '.github/workflows/test.yml', 'upstream workflow\n')
+            commit_file(api, 'api.go', 'package api\n')
+            api_pin = git(api, 'rev-parse', 'HEAD')
+            commit_file(api, 'unreleased.txt', 'not selected by the app\n')
+            commit_file(working, '.github/workflows/test.yml', 'maintained workflow\n')
+            app.mkdir()
+            git(app, 'init', '-b', 'main')
+            identity(app)
+            git(app, 'update-index', '--add', '--cacheinfo', f'160000,{api_pin},core/Clash.Meta')
+            git(app, 'commit', '-m', 'pin core')
+            app_pin = git(app, 'rev-parse', 'HEAD')
+            for local, remote in ((source, 'ztyawc/mihomo-cn2'), (app, 'chen08209/FlClash'),
+                                  (api, 'chen08209/Clash.Meta')):
+                git(working, 'config', f'url.{local}.insteadOf', f'https://github.com/{remote}.git')
+            output = root / 'outputs'
+            for expected in ('true', 'false'):
+                output.write_text('')
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=working,
+                                        env={**os.environ, 'GITHUB_OUTPUT': str(output),
+                                             'GIT_ALLOW_PROTOCOL': 'file'},
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                values = dict(line.split('=', 1) for line in output.read_text().splitlines())
+                self.assertEqual(values['changed'], expected)
+                self.assertEqual(values['app-commit'], app_pin)
+                self.assertEqual(values['commit'], git(working, 'rev-parse', 'HEAD'))
+                self.assertEqual((working / 'qyproxy.txt').read_text(), 'QyProxy CN2 implementation\n')
+                self.assertEqual((working / 'api.go').read_text(), 'package api\n')
+                self.assertEqual((working / '.flclash-api').read_text(), api_pin + '\n')
+                self.assertFalse((working / 'unreleased.txt').exists())
+                self.assertEqual((working / '.github/workflows/test.yml').read_text(), 'maintained workflow\n')
 
 
 if __name__ == '__main__':
