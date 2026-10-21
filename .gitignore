@@ -27,3 +27,24 @@ test/config/cache*
 /dist/
 .vscode/
 .fleet/
+
+# Personal configuration and runtime data (public examples live in examples/)
+/config.yaml
+/config.yml
+/config.*.yaml
+/config.*.yml
+/config-*.yaml
+/config-*.yml
+/analysis/
+/private/
+/artifacts/
+/profiles/
+/runtime/
+.env
+.env.*
+*.local.yaml
+*.local.yml
+*.pcap
+*.pcapng
+*.log
+cache.db

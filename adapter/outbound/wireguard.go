@@ -193,7 +193,11 @@ type ipStack interface {
 func newIPStack(option IPStackOption, localAddresses []netip.Prefix, mtu uint32) (ipStack, error) {
 	mode := option.Mode
 	if mode == ipStackAuto {
-		mode = ipStackMips
+		if features.WithGVisor {
+			mode = ipStackGVisor
+		} else {
+			mode = ipStackMips
+		}
 	}
 	switch mode {
 	case ipStackGVisor:

@@ -1,0 +1,57 @@
+# 公开示例：填写自己当前有效的用户名、密码、设备 SN 和节点参数。
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+
+proxies:
+  - name: 香港主线
+    type: qyproxy
+    role: primary
+    server: 118.126.104.121
+    port: 7025
+    username: "填写主线用户名"
+    password: "填写主线密码"
+    sn: "填写设备SN"
+    game-id: 19535
+    server-id: 21254
+    game-area: hk
+    zone: hk
+
+  - name: CN2
+    type: qyproxy
+    role: cn2
+    server: 119.147.181.51
+    port: 7025
+    username: "填写CN2用户名"
+    password: "填写CN2专用secret"
+    sn: "填写设备SN"
+    game-id: 19535
+    server-id: 21254
+    game-area: hk
+    zone: hk
+
+  - name: CN2 下载
+    type: qyproxy
+    role: cn2_download
+    server: 119.147.181.52
+    port: 7025
+    username: "填写CN2下载用户名"
+    password: "填写CN2专用secret"
+    sn: "填写设备SN"
+    game-id: 19535
+    server-id: 21254
+    game-area: hk
+    zone: hk
+
+proxy-groups:
+  - name: 游戏加速
+    type: select
+    proxies:
+      - CN2 下载
+      - CN2
+      - 香港主线
+
+rules:
+  - MATCH,游戏加速
