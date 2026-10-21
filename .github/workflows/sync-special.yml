@@ -38,7 +38,7 @@ jobs:
           fetch-depth: 0
           path: mihomo
           persist-credentials: false
-          ref: core-mihomo
+          ref: core-cn2
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -46,7 +46,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: mihomo/go.sum
 
-      - name: Merge mihomo and the matching FlClash core
+      - name: Merge CN2 and the matching FlClash API
         id: core-state
         working-directory: mihomo
         shell: bash
@@ -56,37 +56,53 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote set-url origin https://github.com/ztyawc/FlClash.git
           git remote remove source 2>/dev/null || true
-          git remote add source https://github.com/ztyawc/mihomo.git
+          git remote add source https://github.com/ztyawc/mihomo-cn2.git
           git fetch --no-tags source main:refs/remotes/source/main
+          changed=false
+          imported_revision="$(cat .cn2-import)"
+          [[ "$imported_revision" =~ ^[0-9a-f]{40}$ ]]
+          if ! git merge-base --is-ancestor "$imported_revision" HEAD; then
+            # The imported CN2 snapshot has independent history; its adaptations are already in HEAD.
+            git fetch --no-tags source "$imported_revision"
+            git merge --strategy=ours --allow-unrelated-histories --no-edit "$imported_revision"
+            changed=true
+          fi
+          if ! git merge-base --is-ancestor source/main HEAD; then
+            previous_head="$(git rev-parse HEAD)"
+            if ! git merge --no-commit --no-ff source/main; then
+              git rev-parse --verify MERGE_HEAD >/dev/null || exit 1
+            fi
+            git restore --source="$previous_head" --staged --worktree -- .github/workflows
+            if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
+              git diff --name-only --diff-filter=U
+              echo "::error::CN2 source conflicts require manual adaptation."
+              exit 1
+            fi
+            git commit --no-edit
+            changed=true
+          fi
           git remote remove app-source 2>/dev/null || true
           git remote add app-source https://github.com/chen08209/FlClash.git
           git fetch --no-tags app-source main:refs/remotes/app-source/main
           app_commit="$(git rev-parse app-source/main)"
           core_revision="$(git ls-tree "$app_commit" core/Clash.Meta | awk '$1 == "160000" { print $3 }')"
           [[ "$core_revision" =~ ^[0-9a-f]{40}$ ]]
-          git fetch --no-tags https://github.com/chen08209/Clash.Meta.git "$core_revision"
-          git update-ref refs/remotes/flclash-core/pinned FETCH_HEAD
-
-          changed=false
-          for source_ref in source/main flclash-core/pinned; do
-            if git merge-base --is-ancestor "$source_ref" HEAD; then
-              continue
+          previous_api="$(cat .flclash-api)"
+          [[ "$previous_api" =~ ^[0-9a-f]{40}$ ]]
+          if [[ "$previous_api" != "$core_revision" ]]; then
+            git fetch --no-tags https://github.com/chen08209/Clash.Meta.git "$previous_api"
+            git fetch --no-tags https://github.com/chen08209/Clash.Meta.git "$core_revision"
+            patch_file="$(mktemp)"
+            trap 'rm -f "$patch_file"' EXIT
+            git diff "$previous_api" "$core_revision" -- '*.go' go.mod go.sum > "$patch_file"
+            if [[ -s "$patch_file" ]]; then
+              git apply --3way --index "$patch_file"
             fi
-            previous_head="$(git rev-parse HEAD)"
-            # Workflow files are owned by this fork, including during conflicts.
-            # Other merge errors and source-code conflicts must still stop the sync.
-            if ! git merge --no-commit --no-ff "$source_ref"; then
-              git rev-parse --verify MERGE_HEAD >/dev/null || exit 1
-            fi
-            git restore --source="$previous_head" --staged --worktree -- .github/workflows
-            if [[ -n "$(git diff --name-only --diff-filter=U)" ]]; then
-              git diff --name-only --diff-filter=U
-              echo "::error::Upstream source conflicts require manual adaptation."
-              exit 1
-            fi
-            git commit --no-edit
+            printf '%s\n' "$core_revision" > .flclash-api
+            git add .flclash-api
+            git commit -m "chore(core): update FlClash API to $core_revision"
             changed=true
-          done
+          fi
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "app-commit=$app_commit" >> "$GITHUB_OUTPUT"
@@ -99,7 +115,7 @@ jobs:
           SKIP_INTEROP_TEST: "1"
         run: |
           go test ./...
-          go test -tags with_gvisor ./transport/socks5 ./adapter/outbound
+          go test -tags with_gvisor ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./component/updater
 
       - name: Push the tested core branch
         if: steps.core-state.outputs.changed == 'true'
@@ -108,7 +124,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh auth setup-git
-          git push origin HEAD:core-mihomo
+          git push origin HEAD:core-cn2
 
   sync-app:
     needs: sync-core
@@ -172,7 +188,7 @@ jobs:
           set -euo pipefail
           git submodule sync -- core/Clash.Meta
           git submodule update --init core/Clash.Meta
-          git -C core/Clash.Meta fetch --no-tags origin core-mihomo
+          git -C core/Clash.Meta fetch --no-tags origin core-cn2
           core_sha="${{ needs.sync-core.outputs.commit }}"
           git -C core/Clash.Meta checkout --detach "$core_sha"
 

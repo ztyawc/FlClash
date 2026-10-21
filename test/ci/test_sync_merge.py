@@ -20,8 +20,6 @@ class SyncMergeTest(unittest.TestCase):
         self.assertEqual(len(blocks), 2)
         for index, block in enumerate(blocks):
             script = textwrap.dedent('            previous_head=' + block.split('            git commit --no-edit')[0])
-            if index == 0:
-                script = 'source_ref=source/main\n' + script
             with tempfile.TemporaryDirectory(prefix='flclash-merge-test-') as folder:
                 root = pathlib.Path(folder)
 
@@ -130,9 +128,9 @@ class SyncMergeTest(unittest.TestCase):
         self.check_merge(source_conflict=True, core_conflict=True,
                          dependency_conflict=True)
 
-    def test_core_sync_uses_the_app_pin_and_is_idempotent(self):
+    def test_cn2_sync_preserves_protocol_and_uses_the_app_api_pin(self):
         workflow = WORKFLOW.read_text()
-        step = workflow.split('      - name: Merge mihomo and the matching FlClash core\n', 1)[1]
+        step = workflow.split('      - name: Merge CN2 and the matching FlClash API\n', 1)[1]
         script = textwrap.dedent(step.split('        run: |\n', 1)[1].split('\n      - name:', 1)[0])
         with tempfile.TemporaryDirectory(prefix='flclash-core-pair-test-') as folder:
             root = pathlib.Path(folder)
@@ -157,13 +155,20 @@ class SyncMergeTest(unittest.TestCase):
             git(source, 'init', '-b', 'main')
             identity(source)
             commit_file(source, '.github/workflows/test.yml', 'base\n')
+            source_pin = git(source, 'rev-parse', 'HEAD')
             git(root, 'clone', str(source), str(api))
-            git(root, 'clone', str(source), str(working))
+            working.mkdir()
+            git(working, 'init', '-b', 'main')
             identity(api)
             identity(working)
-            commit_file(source, 'private.txt', 'private SOCKS feature\n')
+            git(working, 'config', 'user.email', 'maintained@example.invalid')
+            git(working, 'remote', 'add', 'origin', str(source))
+            commit_file(working, '.github/workflows/test.yml', 'base\n')
+            commit_file(working, '.cn2-import', source_pin + '\n')
+            commit_file(working, '.flclash-api', source_pin + '\n')
+            commit_file(source, 'qyproxy.txt', 'QyProxy CN2 implementation\n')
             commit_file(api, '.github/workflows/test.yml', 'upstream workflow\n')
-            commit_file(api, 'api.txt', 'matching FlClash API\n')
+            commit_file(api, 'api.go', 'package api\n')
             api_pin = git(api, 'rev-parse', 'HEAD')
             commit_file(api, 'unreleased.txt', 'not selected by the app\n')
             commit_file(working, '.github/workflows/test.yml', 'maintained workflow\n')
@@ -173,22 +178,24 @@ class SyncMergeTest(unittest.TestCase):
             git(app, 'update-index', '--add', '--cacheinfo', f'160000,{api_pin},core/Clash.Meta')
             git(app, 'commit', '-m', 'pin core')
             app_pin = git(app, 'rev-parse', 'HEAD')
-            for local, remote in ((source, 'ztyawc/mihomo'), (app, 'chen08209/FlClash'),
+            for local, remote in ((source, 'ztyawc/mihomo-cn2'), (app, 'chen08209/FlClash'),
                                   (api, 'chen08209/Clash.Meta')):
                 git(working, 'config', f'url.{local}.insteadOf', f'https://github.com/{remote}.git')
             output = root / 'outputs'
             for expected in ('true', 'false'):
                 output.write_text('')
                 result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=working,
-                                        env={**os.environ, 'GITHUB_OUTPUT': str(output)},
+                                        env={**os.environ, 'GITHUB_OUTPUT': str(output),
+                                             'GIT_ALLOW_PROTOCOL': 'file'},
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 values = dict(line.split('=', 1) for line in output.read_text().splitlines())
                 self.assertEqual(values['changed'], expected)
                 self.assertEqual(values['app-commit'], app_pin)
                 self.assertEqual(values['commit'], git(working, 'rev-parse', 'HEAD'))
-                self.assertEqual((working / 'private.txt').read_text(), 'private SOCKS feature\n')
-                self.assertEqual((working / 'api.txt').read_text(), 'matching FlClash API\n')
+                self.assertEqual((working / 'qyproxy.txt').read_text(), 'QyProxy CN2 implementation\n')
+                self.assertEqual((working / 'api.go').read_text(), 'package api\n')
+                self.assertEqual((working / '.flclash-api').read_text(), api_pin + '\n')
                 self.assertFalse((working / 'unreleased.txt').exists())
                 self.assertEqual((working / '.github/workflows/test.yml').read_text(), 'maintained workflow\n')
 

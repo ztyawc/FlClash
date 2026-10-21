@@ -197,7 +197,8 @@ jobs:
             printf 'FlClash（特供版）自动构建。\n\n'
             printf -- '- 应用 ID：`com.follow.clash.dev`，可与官方版共存\n'
             printf -- '- FlClash：`%s`\n' "$commit_sha"
-            printf -- '- mihomo 内核：`%s`\n' "$core_sha"
+            printf -- '- mihomo-cn2 内核：`%s`\n' "$core_sha"
+            printf -- '- 内核来源：ztyawc/mihomo-cn2，包含 FlClash 接口适配\n'
             printf -- '- 签名：CI 自动生成的 debug 签名，不需要私人 keystore\n\n'
             printf '不同构建的 debug 证书可能不同；若覆盖安装失败，请先卸载旧特供版。\n'
           } > "$notes"
