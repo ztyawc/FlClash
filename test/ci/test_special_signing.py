@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -101,6 +102,52 @@ class SpecialSigningTest(unittest.TestCase):
         self.verify(f'Signer #1 certificate SHA-256 digest: {self.fingerprint}')
         self.assertEqual((self.root / 'dist/SIGNING_CERTIFICATE_SHA256').read_text(),
                          self.fingerprint + '\n')
+
+    def test_versioned_signer_labels_record_the_same_fixed_certificate(self):
+        self.verify('\n'.join([
+            f'V2 Signer: certificate SHA-256 digest: {self.fingerprint}',
+            'V3.0 Signer: (minSdkVersion=28, maxSdkVersion=2147483647) '
+            f'certificate SHA-256 digest: {self.fingerprint.upper()}',
+            f'Source Stamp Signer: certificate SHA-256 digest: {"0" * 64}',
+        ]))
+        self.assertEqual((self.root / 'dist/SIGNING_CERTIFICATE_SHA256').read_text(),
+                         self.fingerprint + '\n')
+
+    def test_real_android_tools_verify_the_fixed_signer(self):
+        sdk = os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT')
+        if not sdk:
+            self.skipTest('Android SDK is required for real APK signing verification')
+        tools = sorted((Path(sdk) / 'build-tools').glob('*/apksigner'),
+                       key=lambda path: tuple(map(int, re.findall(r'\d+', path.parent.name))))
+        platform = next((Path(sdk) / 'platforms').glob('*/android.jar'), None)
+        if not tools or not platform or not tools[-1].with_name('aapt').is_file():
+            self.skipTest('Android build-tools and an SDK platform are required')
+        signer = tools[-1]
+        manifest = self.root / 'AndroidManifest.xml'
+        manifest.write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+                            'package="com.flclash.signingtest">'
+                            '<uses-sdk android:minSdkVersion="24"/><application/></manifest>')
+        unsigned = self.root / 'unsigned.apk'
+        subprocess.run([str(signer.with_name('aapt')), 'package', '-f', '-M', str(manifest),
+                        '-I', str(platform), '-F', str(unsigned)], capture_output=True, check=True)
+        SIGNING.prepare()
+        apk = self.root / 'dist/real-signed.apk'
+        subprocess.run([str(signer), 'sign', '--ks', str(self.keystore),
+                        '--ks-key-alias', SIGNING.ALIAS,
+                        '--ks-pass', 'env:SPECIAL_ANDROID_KEYSTORE_PASSWORD',
+                        '--key-pass', 'env:SPECIAL_ANDROID_KEYSTORE_PASSWORD',
+                        '--v1-signing-enabled', 'false', '--v2-signing-enabled', 'true',
+                        '--v3-signing-enabled', 'true', '--v4-signing-enabled', 'false',
+                        '--out', str(apk), str(unsigned)], capture_output=True, check=True)
+        SIGNING.verify([apk])
+        fingerprint_file = self.root / 'dist/SIGNING_CERTIFICATE_SHA256'
+        self.assertEqual(fingerprint_file.read_text(), self.fingerprint + '\n')
+        fingerprint_file.unlink()
+        shutil.copyfile(ROOT / 'android/special-signing-certificate.pem',
+                        self.root / 'android/special-signing-certificate.pem')
+        with self.assertRaisesRegex(ValueError, 'fixed release certificate'):
+            SIGNING.verify([apk])
+        self.assertFalse(fingerprint_file.exists())
 
     def test_sdk_range_signers_can_repeat_the_same_fixed_certificate(self):
         for dev_release in ('', ' (dev release=true)'):

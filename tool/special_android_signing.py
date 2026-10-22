@@ -68,12 +68,14 @@ def verify(apks):
                                 capture_output=True, text=True)
         if result.returncode:
             raise ValueError(f'APK signature verification failed: {apk.name}')
-        fingerprints = set(value.lower() for value in re.findall(
-            r'^Signer (?:#\d+|\(minSdkVersion=\d+.*\)) '
-            r'certificate SHA-256 digest: ([0-9a-fA-F]{64})$',
-            result.stdout, re.MULTILINE))
+        fingerprints = set()
+        for line in result.stdout.splitlines():
+            signer, separator, fingerprint = line.partition(' certificate SHA-256 digest: ')
+            if separator and 'Signer' in signer and not signer.startswith('Source Stamp '):
+                fingerprints.add(fingerprint.strip().lower())
         if not fingerprints:
-            raise ValueError(f'No APK signing certificate reported by apksigner: {apk.name}')
+            raise ValueError(f'No APK signing certificate reported by apksigner: {apk.name}\n'
+                             f'{result.stdout}\n{result.stderr}')
         if fingerprints != {expected}:
             raise ValueError(f'APK does not use the fixed release certificate: {apk.name} '
                              f'(expected {expected}; found {", ".join(sorted(fingerprints))})')
