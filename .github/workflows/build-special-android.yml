@@ -23,6 +23,11 @@ on:
         description: Publish the verified APKs
         default: true
         type: boolean
+    secrets:
+      SPECIAL_ANDROID_KEYSTORE:
+        required: true
+      SPECIAL_ANDROID_KEYSTORE_PASSWORD:
+        required: true
 
 permissions:
   contents: write
@@ -34,6 +39,7 @@ concurrency:
 env:
   FLUTTER_VERSION: "3.47.6"
   GO_VERSION: "1.27.1"
+  FLCLASH_SPECIAL_EDITION: "true"
 
 jobs:
   release-state:
@@ -91,6 +97,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Prepare fixed Android signing
+        env:
+          SPECIAL_ANDROID_KEYSTORE: ${{ secrets.SPECIAL_ANDROID_KEYSTORE }}
+          SPECIAL_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SPECIAL_ANDROID_KEYSTORE_PASSWORD }}
+        run: python3 tool/special_android_signing.py prepare
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -174,6 +186,13 @@ jobs:
           done
           sha256sum "${apks[@]}" > dist/SHA256SUMS
 
+      - name: Verify fixed APK signatures
+        run: python3 tool/special_android_signing.py verify dist/*.apk
+
+      - name: Remove signing material
+        if: always()
+        run: python3 tool/special_android_signing.py clean
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -181,6 +200,7 @@ jobs:
           path: |
             dist/*.apk
             dist/SHA256SUMS
+            dist/SIGNING_CERTIFICATE_SHA256
           if-no-files-found: error
           retention-days: 90
 
@@ -203,15 +223,16 @@ jobs:
             printf -- '- FlClash：`%s`\n' "$commit_sha"
             printf -- '- mihomo-cn2 内核：`%s`\n' "$core_sha"
             printf -- '- 内核来源：ztyawc/mihomo-cn2，包含 FlClash 接口适配\n'
-            printf -- '- 签名：CI 自动生成的 debug 签名，不需要私人 keystore\n\n'
-            printf '不同构建的 debug 证书可能不同；若覆盖安装失败，请先卸载旧特供版。\n'
+            printf -- '- 签名：固定发布证书（RSA 3072）\n'
+            printf -- '- 证书 SHA-256：`%s`\n\n' "$(cat dist/SIGNING_CERTIFICATE_SHA256)"
+            printf '从临时 debug 签名版本切换时，请先导出配置再卸载旧版；此后的固定签名版本可覆盖更新。\n'
           } > "$notes"
 
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --title "FlClash 特供版 ${version}" --notes-file "$notes"
-            gh release upload "$tag" dist/*.apk dist/SHA256SUMS --clobber
+            gh release upload "$tag" dist/*.apk dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 --clobber
           else
-            gh release create "$tag" dist/*.apk dist/SHA256SUMS \
+            gh release create "$tag" dist/*.apk dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 \
               --target "$commit_sha" \
               --title "FlClash 特供版 ${version}" \
               --notes-file "$notes" \

@@ -26,6 +26,7 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/build-special-android.yml
+    secrets: inherit
     with:
       ref: ${{ github.sha }}
       publish: false

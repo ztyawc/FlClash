@@ -6,10 +6,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val isSpecialEdition = System.getenv("FLCLASH_SPECIAL_EDITION") == "true"
 val localProperties = Properties().apply {
     val localPropertiesFile = rootProject.file("local.properties")
     if (localPropertiesFile.exists()) {
         localPropertiesFile.inputStream().use { load(it) }
+    }
+    if (isSpecialEdition) {
+        rootProject.file("special-signing.properties").inputStream().use { load(it) }
     }
 }
 
@@ -21,6 +25,10 @@ val hasReleaseSigning = releaseStoreFile.exists() &&
     releaseStorePassword != null &&
     releaseKeyAlias != null &&
     releaseKeyPassword != null
+
+check(!isSpecialEdition || hasReleaseSigning) {
+    "The special edition requires its fixed release signing key."
+}
 
 android {
     namespace = "com.follow.clash"
@@ -66,6 +74,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            if (isSpecialEdition) {
+                applicationIdSuffix = ".dev"
+            }
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             } else {

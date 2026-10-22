@@ -130,6 +130,8 @@ jobs:
     needs: sync-core
     if: needs.sync-core.result == 'success'
     runs-on: ubuntu-latest
+    env:
+      FLCLASH_SPECIAL_EDITION: "true"
     outputs:
       changed: ${{ steps.app-state.outputs.changed }}
       commit: ${{ steps.app-state.outputs.commit }}
@@ -248,6 +250,13 @@ jobs:
         if: steps.pending.outputs.changed == 'true'
         run: flutter analyze --no-fatal-infos
 
+      - name: Prepare fixed Android signing
+        if: steps.pending.outputs.changed == 'true'
+        env:
+          SPECIAL_ANDROID_KEYSTORE: ${{ secrets.SPECIAL_ANDROID_KEYSTORE }}
+          SPECIAL_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SPECIAL_ANDROID_KEYSTORE_PASSWORD }}
+        run: python3 tool/special_android_signing.py prepare
+
       - name: Run Flutter tests
         if: steps.pending.outputs.changed == 'true'
         run: bash tool/test_special_flutter.sh
@@ -257,6 +266,14 @@ jobs:
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: dart setup.dart android -v
+
+      - name: Verify fixed APK signatures
+        if: steps.pending.outputs.changed == 'true'
+        run: python3 tool/special_android_signing.py verify dist/*.apk
+
+      - name: Remove signing material
+        if: always()
+        run: python3 tool/special_android_signing.py clean
 
       - name: Commit dependency revisions
         if: steps.pending.outputs.changed == 'true'
@@ -294,5 +311,6 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/build-special-android.yml
+    secrets: inherit
     with:
       ref: ${{ needs.sync-app.outputs.commit }}
