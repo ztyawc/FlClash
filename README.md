@@ -1,7 +1,7 @@
 # mihomo-cn2
 
-支持 QyProxy 游戏主线、CN2、CN2 下载的定制 mihomo 内核，同时保留
-CMCC SOCKS5 `0x80` / `0x82` 支持。
+支持 QyProxy 游戏主线、CN2、CN2 下载和 UU 自定义 SNI/TCP 的定制 mihomo
+内核，同时保留 CMCC SOCKS5 `0x80` / `0x82` 支持。
 
 ## 功能与配置
 
@@ -9,6 +9,10 @@ CMCC SOCKS5 `0x80` / `0x82` 支持。
 - Go 原生实现 CHAP-MD5 认证、心跳、TCP/UDP 数据转发和隧道内 DNS。
 - 无需运行 Python 中转或原 APP；节点账号和配置须自行提供。
 - 保留 mihomo 的代理组、规则、TUN 等功能。
+- `type: uusni`：原生 UU 下载自定义 SNI/TCP，无外层 TLS。支持手填节点参数
+  和 `uusni://` 订阅转换，不需要 UU、LSPosed、旧原生库或本地中转进程。
+  参数说明和限制见 [UUSNI.md](UUSNI.md)，配置见
+  [examples/uusni.yaml](examples/uusni.yaml)。
 
 [三线路示例配置](examples/qyproxy.yaml) 中的账号、密码、SN 均为占位内容。
 下列节点放在配置的 `proxies:` 下，替换为自己当前有效的参数：
@@ -55,7 +59,13 @@ Linux 上交叉编译 Windows amd64：
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOAMD64=v1 go build -tags with_gvisor -trimpath -o bin/mihomo.exe .
 ```
 
-Android arm64 需要 NDK，已用 r29-beta1 / API 34 编译器验证：
+Android arm64 CLI 可使用纯 Go 交叉编译，本次 UU SNI 已验证此方式：
+
+```sh
+CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build -tags with_gvisor -trimpath -o bin/mihomo-android-arm64 .
+```
+
+需要启用 CGO 时，也可使用此前验证的 NDK r29-beta1 / API 34 编译器：
 
 ```sh
 CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android34-clang" go build -tags with_gvisor -trimpath -o bin/mihomo-android-arm64 .
@@ -69,9 +79,13 @@ CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC="${ANDROID_NDK_HOME}/toolchains/llvm/
 Linux、Windows 三条线路已通过 HTTP、HTTPS、UDP DNS、UDP STUN、并发及心跳测试。
 Android 已编译，尚未真机验证。测试夹具使用合成账号和本地模拟服务器。
 
+UU SNI 另外覆盖独立线格式向量、短写、取消/关闭、FIN、域名恢复、URI 转换、
+内核复制路径和严格证书验证的本地 HTTPS；真实 UU 节点及客户端仍需实测，
+具体结果和环境限制见 [UUSNI.md](UUSNI.md)。
+
 ```sh
 SKIP_CONCURRENT_TEST=1 SKIP_INTEROP_TEST=1 go test ./...
-go test -tags with_gvisor ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./component/updater
+go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
 ```
 
 GitHub Actions 在 main 的 push、PR 和手动触发时运行测试及 Windows 交叉编译。

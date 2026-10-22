@@ -27,6 +27,12 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 		err   error
 	)
 	switch proxyType {
+	case "uusni":
+		option := &outbound.UUSNIOption{BasicOption: basicOption}
+		if err = decoder.Decode(mapping, option); err != nil {
+			break
+		}
+		proxy, err = outbound.NewUUSNI(*option)
 	case "qyproxy":
 		qyOption := &outbound.QyProxyOption{BasicOption: basicOption}
 		err = decoder.Decode(mapping, qyOption)
@@ -245,6 +251,9 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 			return nil, err
 		}
 		if muxOption.Enabled {
+			if proxy.Type() == C.UUSNI {
+				return nil, fmt.Errorf("uusni: smux is not supported")
+			}
 			proxy, err = outbound.NewSingMux(*muxOption, proxy)
 			if err != nil {
 				return nil, err
