@@ -1,0 +1,61 @@
+name: Generate special-edition bindings
+
+on:
+  push:
+    branches:
+      - update/flclash-cn2-20261022
+    paths:
+      - .github/workflows/generate-special-bindings.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.repository == 'ztyawc/FlClash' && github.ref == 'refs/heads/update/flclash-cn2-20261022'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.6'
+          cache: true
+
+      - name: Install locked dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Generate localization and model bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup="$(mktemp)"
+          cp pubspec.yaml "$backup"
+          trap 'cp "$backup" pubspec.yaml; rm -f "$backup"' EXIT
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          dart run intl_utils:generate
+          dart run build_runner build --delete-conflicting-outputs
+          dart format lib/enum/enum.dart lib/models/clash_config.dart lib/views/profiles/custom/custom_proxies.dart test/features/custom_profile_views_test.dart
+
+      - name: Commit generated bindings to the update branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- pubspec.yaml pubspec.lock
+          git add lib/l10n lib/models/generated lib/providers/generated lib/database/generated
+          git add lib/enum/enum.dart lib/models/clash_config.dart lib/views/profiles/custom/custom_proxies.dart test/features/custom_profile_views_test.dart
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git diff --cached --stat
+          git commit -m 'chore: generate CN2 and UU SNI form bindings'
+          gh auth setup-git
+          git push origin HEAD:update/flclash-cn2-20261022

@@ -238,6 +238,8 @@ extension ProxyExt on Proxy {
 
 /// The `type` values `adapter.ParseProxy` accepts, in its own order.
 const customProxyTypes = [
+  'uusni',
+  'qyproxy',
   'ss',
   'ssr',
   'socks5',
@@ -395,6 +397,16 @@ extension CustomProxyExt on CustomProxy {
   List<String> get searchFields => [name, type, ?server];
 
   Set<String> get requiredKeys => switch (type) {
+    'uusni' => const {'server', 'port', 'obfs-key', 'sni-crypt'},
+    'qyproxy' => const {
+      'server',
+      'port',
+      'username',
+      'password',
+      'sn',
+      'game-id',
+      'server-id',
+    },
     'ss' => const {'server', 'port', 'password', 'cipher'},
     'ssr' => const {'server', 'port', 'password', 'cipher', 'obfs', 'protocol'},
     'vmess' => const {'server', 'port', 'uuid', 'alterId', 'cipher'},
@@ -421,6 +433,14 @@ extension CustomProxyExt on CustomProxy {
 
   /// The rows the form always shows: the credentials and [requiredKeys].
   List<ProxyField> get fields => switch (type) {
+    'uusni' => const [ProxyField.obfsKey, ProxyField.sniCrypt],
+    'qyproxy' => const [
+      ProxyField.username,
+      ProxyField.password,
+      ProxyField.sn,
+      ProxyField.gameId,
+      ProxyField.serverId,
+    ],
     'ss' => const [ProxyField.cipher, ProxyField.password],
     'ssr' => const [
       ProxyField.cipher,
@@ -478,6 +498,11 @@ extension CustomProxyExt on CustomProxy {
     final type = this.type;
     return switch (field) {
       ProxyField.username ||
+      ProxyField.sn ||
+      ProxyField.gameId ||
+      ProxyField.serverId ||
+      ProxyField.obfsKey ||
+      ProxyField.sniCrypt ||
       ProxyField.password ||
       ProxyField.uuid ||
       ProxyField.psk ||
@@ -487,6 +512,7 @@ extension CustomProxyExt on CustomProxy {
       ProxyField.cipher ||
       ProxyField.alterId ||
       ProxyField.transport => false,
+      ProxyField.qyRole => type == 'qyproxy',
       ProxyField.privateKey || ProxyField.privateKeyPassphrase => type == 'ssh',
       ProxyField.preSharedKey || ProxyField.allowedIps => type == 'wireguard',
       ProxyField.obfs ||
@@ -618,6 +644,7 @@ extension CustomProxyExt on CustomProxy {
 
   /// The values the core accepts, in the order the form lists them.
   List<String> choicesOf(ProxyField field) => switch (field) {
+    ProxyField.qyRole => const ['primary', 'cn2', 'cn2_download'],
     ProxyField.cipher => switch (type) {
       'ss' => _ssCiphers,
       'ssr' => _ssrCiphers,
@@ -751,6 +778,8 @@ extension CustomProxyExt on CustomProxy {
       }
     }
     final defaults = switch (type) {
+      'uusni' => const {ProxyField.sniCrypt: true},
+      'qyproxy' => const {ProxyField.qyRole: 'primary'},
       'vmess' => const {ProxyField.cipher: 'auto', ProxyField.alterId: 0},
       'mieru' => const {ProxyField.transport: 'TCP'},
       _ => const <ProxyField, Object>{},

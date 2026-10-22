@@ -1270,6 +1270,43 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  for (final type in ['uusni', 'qyproxy']) {
+    testWidgets('$type exposes its required connection fields', (tester) async {
+      await pumpNodes(tester, [
+        CustomProxy(
+          id: 1,
+          definition: {
+            'name': 'Custom core',
+            'type': type,
+            'server': 'node.example.com',
+            'port': 5556,
+            if (type == 'uusni') ...{'obfs-key': 67, 'sni-crypt': true},
+            if (type == 'qyproxy') ...{
+              'username': 'user',
+              'password': 'password',
+              'sn': 'serial',
+              'game-id': 1,
+              'server-id': 2,
+            },
+          },
+        ),
+      ]);
+      await tester.tap(find.text('Custom core'));
+      await tester.pumpAndSettle();
+
+      final l = currentAppLocalizations;
+      final labels = type == 'uusni'
+          ? [l.obfsKey, l.sniCrypt]
+          : ['SN', l.gameId, l.serverId];
+      for (final label in labels) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets('an empty nodes page offers to add one', (tester) async {
     await pumpNodes(tester, const []);
     final l = currentAppLocalizations;
