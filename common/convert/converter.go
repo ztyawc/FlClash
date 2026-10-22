@@ -34,6 +34,13 @@ func ConvertsV2Ray(buf []byte) ([]map[string]any, error) {
 
 		scheme = strings.ToLower(scheme)
 		switch scheme {
+		case "uusni":
+			proxy, err := parseUUSNI(line)
+			if err != nil {
+				continue
+			}
+			proxy["name"] = uniqueName(names, proxy["name"].(string))
+			proxies = append(proxies, proxy)
 		case "hysteria":
 			urlHysteria, err := url.Parse(line)
 			if err != nil {
