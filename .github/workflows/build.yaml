@@ -6,6 +6,7 @@ on:
       - '**'
     tags:
       - 'v*'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -13,8 +14,10 @@ concurrency:
 
 env:
   IS_STABLE: ${{ !contains(github.ref, '-') }}
-  FLUTTER_VERSION: '3.47.1'
-  GO_VERSION: '1.26.4'
+  # See CI Caches in .agents/commands.md.
+  BRANCH_CACHE: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  FLUTTER_VERSION: '3.47.6'
+  GO_VERSION: '1.27.1'
   NDK_VERSION: r28c
 
 jobs:
@@ -29,25 +32,33 @@ jobs:
 
   dart:
     name: Dart
+    # A private copy pays for its Actions minutes, so it runs the checks only when
+    # started by hand.
+    if: &checks github.event_name == 'workflow_dispatch' || !github.event.repository.private
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: true
 
-      - name: Test commit message hook
-        run: bash tool/check_commit_msg_test.sh
+      - name: Test git hooks
+        run: bash tool/hooks/test.sh
 
-      - name: Test comment density hook
-        run: bash tool/check_comment_density_test.sh
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugins/rust_api/rust
+          cache-directories: .dart_tool/hooks_runner
+          save-if: ${{ env.BRANCH_CACHE }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          cache: ${{ env.BRANCH_CACHE }}
 
       - name: Install dependencies
         run: flutter pub get
@@ -58,22 +69,23 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-fatal-infos
 
-      - name: Skip native build hooks
+      - name: Skip the Go core build hook
         run: |
-          yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
+          yq -i '.hooks.user_defines.setup.build_assets = false' pubspec.yaml
 
       - name: Verify changelog
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         run: dart run tool/changelog.dart verify
 
       - name: Run tests
-        run: flutter test --reporter expanded --coverage
+        run: dart run tool/test.dart -- --reporter expanded --coverage
 
       - name: Check coverage
         run: dart run tool/check_coverage.dart coverage/lcov.info 75
 
   plugins:
     name: Plugins
+    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -84,7 +96,7 @@ jobs:
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          cache: ${{ env.BRANCH_CACHE }}
 
       - name: Validate local Flutter packages
         run: bash tool/check_plugins.sh
@@ -96,8 +108,77 @@ jobs:
           dart analyze
           dart test
 
+  desktop:
+    name: Desktop ${{ matrix.platform }}
+    if: (github.event_name == 'workflow_dispatch' || !github.event.repository.private) && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            os: ubuntu-latest
+          - platform: windows
+            os: windows-2022
+          - platform: macos
+            os: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            core/go.sum
+            plugins/setup/setup_hooks/lib/src/go_builder.dart
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-${{ matrix.platform }}
+          workspaces: |
+            services/helper
+            plugins/rust_api/rust
+          cache-directories: .dart_tool/hooks_runner
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev libayatana-appindicator3-dev libsecret-1-dev
+
+      - name: Setup Xcode
+        if: matrix.platform == 'macos'
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
+          xcodebuild -version
+
+      - name: Enable git long paths (Windows)
+        if: matrix.platform == 'windows'
+        run: git config --global core.longpaths true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Compiles the desktop runners and the native plugin code that only the
+      # tagged release matrix built before; the bundle itself is discarded.
+      - name: Build debug bundle
+        run: flutter build ${{ matrix.platform }} --debug
+
   go:
     name: Go core
+    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -109,6 +190,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: ${{ env.BRANCH_CACHE }}
           cache-dependency-path: core/go.sum
 
       - name: Validate Go core wrapper
@@ -120,46 +202,48 @@ jobs:
             echo 'No Go tests found in core/; the test step would pass vacuously.' >&2
             exit 1
           fi
-          test -z "$(gofmt -l ./*.go ./platform ./tun)" || {
-            gofmt -l ./*.go ./platform ./tun >&2
+          test -z "$(gofmt -l ./*.go ./cmd ./mobile ./platform ./tun)" || {
+            gofmt -l ./*.go ./cmd ./mobile ./platform ./tun >&2
             exit 1
           }
           go test -count=1 .
-          go vet .
+          go vet . ./cmd/...
           GOOS=linux go vet ./platform
-
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        id: ndk
-        with:
-          ndk-version: ${{ env.NDK_VERSION }}
 
       - name: Validate the Android core library
         working-directory: core
         env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+          CGO_ENABLED: 0
         run: |
-          # Nothing else compiles the `android && cgo` files before a `v*` tag.
-          CC="$(echo "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android21-clang)"
-          test -x "$CC" || { echo "NDK clang not found at $CC" >&2; exit 1; }
           tags="$(sed -n 's/^tags: *//p' ../build_config.yaml)"
           test -n "$tags" || { echo 'Could not read tags from build_config.yaml' >&2; exit 1; }
-          export CGO_ENABLED=1 GOOS=android GOARCH=arm64 CC
-          go vet "-tags=$tags" . ./tun ./platform
+          GOOS=android GOARCH=arm64 go vet "-tags=$tags" . ./mobile ./tun ./platform
 
   android:
     name: Android unit tests
+    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: ${{ env.BRANCH_CACHE }}
+          cache-dependency-path: |
+            core/go.sum
+            android/core/build.gradle.kts
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          cache: ${{ env.BRANCH_CACHE }}
 
       - name: Install dependencies
         run: flutter pub get
@@ -169,6 +253,7 @@ jobs:
         id: ndk
         with:
           ndk-version: ${{ env.NDK_VERSION }}
+          link-to-sdk: true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -178,6 +263,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
       - name: Run Android unit tests
         working-directory: android
@@ -192,13 +279,15 @@ jobs:
           test -d "$wrapper" || flutter precache
           cp -R "$wrapper/." .
           chmod +x gradlew
-          # `:core` only calls System.loadLibrary; the excluded Flutter tasks would run
-          # the native build hooks for every debug ABI, which no JVM unit test consumes.
+          # No JVM unit test loads the Core or the Flutter build, but `:core` compiles against
+          # the gomobile AAR, so one ABI of it is built.
           ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest \
+            -Ptarget-platform=android-arm64 \
             -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
 
   rust:
     name: Rust
+    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -210,6 +299,7 @@ jobs:
           workspaces: |
             services/helper
             plugins/rust_api/rust
+          save-if: ${{ env.BRANCH_CACHE }}
 
       - name: Check format
         run: |
@@ -223,6 +313,7 @@ jobs:
 
   windows-helper-test:
     name: Windows helper test
+    if: *checks
     runs-on: windows-2022
     steps:
       - name: Checkout
@@ -232,6 +323,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: services/helper
+          save-if: ${{ env.BRANCH_CACHE }}
 
       - name: Check format
         run: cargo fmt --manifest-path services/helper/Cargo.toml -- --check
@@ -240,8 +332,8 @@ jobs:
         run: cargo test --manifest-path services/helper/Cargo.toml --features windows-service
 
   build:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [ dart, plugins, go, android, rust, windows-helper-test ]
+    # Releases publish where the release links point: the public repository.
+    if: github.repository == 'chen08209/FlClash' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -263,9 +355,11 @@ jobs:
           - platform: windows
             os: windows-11-arm
             arch: arm64
+            flutter-channel: master
           - platform: linux
             os: ubuntu-24.04-arm
             arch: arm64
+            flutter-channel: master
 
     steps:
       - name: Setup rust
@@ -286,7 +380,6 @@ jobs:
         if: startsWith(matrix.platform,'android')
         run: |
           echo "${{ secrets.KEYSTORE }}" | base64 --decode > android/app/keystore.jks
-          echo "${{ secrets.SERVICE_JSON }}" | base64 --decode > android/app/google-services.json
           {
             echo "keyAlias=${{ secrets.KEY_ALIAS }}"
             echo "storePassword=${{ secrets.STORE_PASSWORD }}"
@@ -297,14 +390,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: ${{ env.BRANCH_CACHE }}
           cache-dependency-path: core/go.sum
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.platform }}-${{ matrix.arch || 'all' }}
-          workspaces: services/helper
-          cache-directories: .dart_tool/hooks_runner
 
       - name: Setup Gradle
         if: startsWith(matrix.platform,'android')
@@ -319,9 +406,9 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: master
+          channel: ${{ matrix.flutter-channel || 'stable' }}
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          cache: ${{ env.BRANCH_CACHE }}
 
       - name: Setup Xcode
         if: startsWith(matrix.platform,'macos')
@@ -343,6 +430,23 @@ jobs:
           flutter --version
           flutter pub get
 
+      # See .agents/flutter-upgrade.md before bumping FLUTTER_VERSION.
+      - name: Disable Impeller on Intel macOS
+        if: matrix.platform == 'macos' && matrix.arch == 'amd64'
+        run: plutil -replace FLTEnableImpeller -bool NO macos/Runner/Info.plist
+
+      # The core embeds this bundle and FlClashHttpOverrides.trustCoreRoots loads it for Dart.
+      # Pinned by hash, so a new bundle from https://curl.se/docs/caextract.html is a reviewed bump.
+      - name: Fetch CA certificates
+        shell: bash
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
       - name: Setup
         env:
           ANDROID_NDK_HOME: ${{ steps.build-ndk.outputs.ndk-path }}
@@ -358,7 +462,7 @@ jobs:
   upload:
     permissions:
       contents: write
-    needs: [ build ]
+    needs: [ build, dart, plugins, go, android, rust, windows-helper-test ]
     runs-on: ubuntu-latest
     services:
       telegram-bot-api:
@@ -386,7 +490,7 @@ jobs:
         with:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          cache: ${{ env.BRANCH_CACHE }}
 
       - name: Install dependencies
         run: flutter pub get

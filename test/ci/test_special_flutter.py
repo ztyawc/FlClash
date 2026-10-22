@@ -19,16 +19,22 @@ class SpecialFlutterTest(unittest.TestCase):
                             '      build_assets: true\n')
                 config = root / 'pubspec.yaml'
                 config.write_text(original)
-                flutter = root / 'flutter'
+                flutter = root / 'dart'
                 flutter.write_text('#!/usr/bin/env bash\n'
-                                   'test "$(grep -c "build_assets: false" pubspec.yaml)" -eq 2 || exit 99\n'
+                                   'test "$(grep -c "build_assets: false" pubspec.yaml)" -eq 1 || exit 99\n'
+                                   'grep -A1 "rust_api:" pubspec.yaml | grep -q "build_assets: true" || exit 99\n'
+                                   'printf "%s\\n" "$@" > test-arguments\n'
                                    'exit "$TEST_EXIT_CODE"\n')
                 flutter.chmod(0o755)
                 env = {**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}',
                        'TEST_EXIT_CODE': str(exit_code)}
-                result = subprocess.run(['bash', str(root / 'tool' / script.name)], env=env)
+                result = subprocess.run(['bash', str(root / 'tool' / script.name),
+                                         '--concurrency=2'], env=env)
                 self.assertEqual(result.returncode, exit_code)
                 self.assertEqual(config.read_text(), original)
+                self.assertEqual((root / 'test-arguments').read_text().splitlines(),
+                                 ['run', 'tool/test.dart', '--', '--reporter', 'expanded',
+                                  '--concurrency=2'])
 
 
 if __name__ == '__main__':

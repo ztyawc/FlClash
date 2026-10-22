@@ -1,14 +1,16 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/views/config/on_demand.dart';
+import 'package:fl_clash/views/config/user_agents.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-part 'general/port_dialog.dart';
-part 'general/ua_dialog.dart';
+part 'general/port_form.dart';
 
 class LogLevelItem extends ConsumerWidget {
   const LogLevelItem({super.key});
@@ -16,7 +18,6 @@ class LogLevelItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, ref) {
     return ConfigOptionsItem<LogLevel>(
-      leading: const Icon(Icons.info_outline),
       title: (l) => l.logLevel,
       options: LogLevel.values,
       textBuilder: (logLevel) => logLevel.name,
@@ -31,82 +32,16 @@ class LogLevelItem extends ConsumerWidget {
 class UaItem extends ConsumerWidget {
   const UaItem({super.key});
 
-  Future<void> _handleShowUaDialog(WidgetRef ref) async {
-    final result = await dialogs.showCommonDialog<_UaDialogResult>(
-      child: _UaDialog(
-        value: ref.read(patchClashConfigProvider).globalUa,
-        customValue: ref.read(appSettingProvider).customUserAgent,
-      ),
-    );
-    if (result == null) {
-      return;
-    }
-    final userAgent = result.value.trim();
-    if (result.isCustom) {
-      ref
-          .read(appSettingProvider.notifier)
-          .update((state) => state.copyWith(customUserAgent: userAgent));
-    }
-    ref
-        .read(patchClashConfigProvider.notifier)
-        .update(
-          (state) =>
-              state.copyWith(globalUa: userAgent.isEmpty ? null : userAgent),
-        );
-  }
-
   @override
   Widget build(BuildContext context, ref) {
     final appLocalizations = context.appLocalizations;
     final globalUa = ref.watch(
       patchClashConfigProvider.select((state) => state.globalUa),
     );
-    return ListItem(
-      leading: const Icon(Icons.computer_outlined),
+    return ListItem.open(
       title: Text(appLocalizations.userAgent),
       subtitle: Text(globalUa ?? appLocalizations.defaultText),
-      onTap: () => _handleShowUaDialog(ref),
-    );
-  }
-}
-
-class KeepAliveIntervalItem extends ConsumerWidget {
-  const KeepAliveIntervalItem({super.key});
-
-  @override
-  Widget build(BuildContext context, ref) {
-    final appLocalizations = context.appLocalizations;
-    final keepAliveInterval = ref.watch(
-      patchClashConfigProvider.select((state) => state.keepAliveInterval),
-    );
-    return ListItem.input(
-      leading: const Icon(Icons.timer_outlined),
-      title: Text(appLocalizations.keepAliveIntervalDesc),
-      subtitle: Text(appLocalizations.secondsCount(keepAliveInterval)),
-      dialogTitle: appLocalizations.keepAliveIntervalDesc,
-      suffixText: appLocalizations.seconds,
-      resetValue: '$defaultKeepAliveInterval',
-      value: '$keepAliveInterval',
-      maxLength: TextInputLimits.interval,
-      validator: (String? value) {
-        if (value == null || value.isEmpty) {
-          return appLocalizations.emptyTip(appLocalizations.interval);
-        }
-        final intValue = int.tryParse(value);
-        if (intValue == null) {
-          return appLocalizations.numberTip(appLocalizations.interval);
-        }
-        return null;
-      },
-      onChanged: (String? value) {
-        if (value == null) {
-          return;
-        }
-        final intValue = int.parse(value);
-        ref
-            .read(patchClashConfigProvider.notifier)
-            .update((state) => state.copyWith(keepAliveInterval: intValue));
-      },
+      widget: const UserAgentsView(),
     );
   }
 }
@@ -121,7 +56,6 @@ class TestUrlItem extends ConsumerWidget {
       appSettingProvider.select((state) => state.testUrl),
     );
     return ListItem.input(
-      leading: const Icon(Icons.timeline),
       title: Text(appLocalizations.testUrl),
       subtitle: Text(testUrl),
       resetValue: defaultTestUrl,
@@ -152,8 +86,11 @@ class TestUrlItem extends ConsumerWidget {
 class PortItem extends ConsumerWidget {
   const PortItem({super.key});
 
-  Future<void> handleShowPortDialog() async {
-    await dialogs.showCommonDialog(child: const _PortDialog());
+  Future<void> handleShowPortForm(BuildContext context) async {
+    await showFormSheet<void>(
+      context: context,
+      builder: (_) => const _PortForm(),
+    );
   }
 
   @override
@@ -163,11 +100,10 @@ class PortItem extends ConsumerWidget {
       patchClashConfigProvider.select((state) => state.mixedPort),
     );
     return ListItem(
-      leading: const Icon(Icons.adjust_outlined),
       title: Text(appLocalizations.port),
       subtitle: Text('$mixedPort'),
       onTap: () {
-        handleShowPortDialog();
+        handleShowPortForm(context);
       },
     );
   }
@@ -183,13 +119,15 @@ class HostsItem extends ConsumerWidget {
       patchClashConfigProvider.select((state) => state.hosts),
     );
     return ListItem.open(
-      leading: const Icon(Icons.view_list_outlined),
       title: const Text('Hosts'),
-      subtitle: Text(appLocalizations.hostsDesc),
-      blur: false,
-      widget: MapInputPage(
+      subtitle: Text(
+        hosts.isEmpty
+            ? appLocalizations.none
+            : appLocalizations.itemsCount(hosts.length),
+      ),
+      widget: MapEditView(
         title: 'Hosts',
-        map: hosts,
+        entries: hosts,
         keyMaxLength: TextInputLimits.domain,
         valueMaxLength: TextInputLimits.hostValue,
         titleBuilder: (item) => Text(item.key),
@@ -210,9 +148,7 @@ class AuthenticationItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, ref) {
     return ConfigToggleItem(
-      leading: const Icon(Icons.key_outlined),
       title: (l) => l.authentication,
-      subtitle: (l) => l.authenticationDesc,
       selector: networkSettingProvider.select(
         (state) => state.authentication.enable,
       ),
@@ -237,7 +173,6 @@ class AuthenticationAccountItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, ref) {
     return ConfigTextItem(
-      leading: const Icon(Icons.person_outline),
       title: (l) => l.account,
       maxLength: TextInputLimits.userName,
       selector: networkSettingProvider.select(
@@ -259,7 +194,6 @@ class AuthenticationPasswordItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, ref) {
     return ConfigTextItem(
-      leading: const Icon(Icons.password_outlined),
       title: (l) => l.password,
       maxLength: TextInputLimits.password,
       selector: networkSettingProvider.select(
@@ -273,17 +207,30 @@ class AuthenticationPasswordItem extends ConsumerWidget {
   }
 }
 
+class ExternalControllerSecretItem extends ConsumerWidget {
+  const ExternalControllerSecretItem({super.key});
+
+  @override
+  Widget build(BuildContext context, ref) {
+    return ConfigTextItem(
+      title: (l) => l.externalControllerSecret,
+      maxLength: TextInputLimits.password,
+      selector: patchClashConfigProvider.select((state) => state.secret),
+      normalize: (value) => value.trim(),
+      onChanged: (ref, value) => ref
+          .read(patchClashConfigProvider.notifier)
+          .update((state) => state.copyWith(secret: value)),
+    );
+  }
+}
+
 ConfigToggleItem _clashToggle({
-  required IconData icon,
   required ConfigLabel title,
-  required ConfigLabel subtitle,
   required bool Function(PatchClashConfig state) select,
   required PatchClashConfig Function(PatchClashConfig state, bool value) update,
 }) {
   return ConfigToggleItem(
-    leading: Icon(icon),
     title: title,
-    subtitle: subtitle,
     selector: patchClashConfigProvider.select(select),
     onChanged: (ref, value) => ref
         .read(patchClashConfigProvider.notifier)
@@ -291,8 +238,187 @@ ConfigToggleItem _clashToggle({
   );
 }
 
-class GeneralListView extends ConsumerWidget {
-  const GeneralListView({super.key});
+ConfigToggleItem _appSettingToggle({
+  required ConfigLabel title,
+  required bool Function(AppSettingProps state) select,
+  required AppSettingProps Function(AppSettingProps state, bool value) update,
+}) {
+  return ConfigToggleItem(
+    title: title,
+    selector: appSettingProvider.select(select),
+    onChanged: (ref, value) => ref
+        .read(appSettingProvider.notifier)
+        .update((state) => update(state, value)),
+  );
+}
+
+class GeneralView extends ConsumerWidget {
+  const GeneralView({super.key});
+
+  List<Widget> _startupItems(AppLocalizations appLocalizations) {
+    return [
+      if (system.isDesktop) ...[
+        _appSettingToggle(
+          title: (l) => l.autoLaunch,
+          select: (state) => state.autoLaunch,
+          update: (state, value) => state.copyWith(autoLaunch: value),
+        ),
+        _appSettingToggle(
+          title: (l) => l.silentLaunch,
+          select: (state) => state.silentLaunch,
+          update: (state, value) => state.copyWith(silentLaunch: value),
+        ),
+      ],
+      _appSettingToggle(
+        title: (l) => l.autoRun,
+        select: (state) => state.autoRun,
+        update: (state, value) => state.copyWith(autoRun: value),
+      ),
+      ListItem.open(
+        title: Text(appLocalizations.onDemand),
+        widget: const OnDemandView(),
+      ),
+      _appSettingToggle(
+        title: (l) => l.minimizeOnExit,
+        select: (state) => state.minimizeOnExit,
+        update: (state, value) => state.copyWith(minimizeOnExit: value),
+      ),
+      if (system.isAndroid) ...[
+        _appSettingToggle(
+          title: (l) => l.exclude,
+          select: (state) => state.hidden,
+          update: (state, value) => state.copyWith(hidden: value),
+        ),
+        _appSettingToggle(
+          title: (l) => l.showNotificationStopAction,
+          select: (state) => state.showNotificationStopAction,
+          update: (state, value) =>
+              state.copyWith(showNotificationStopAction: value),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _inboundItems({
+    required bool authentication,
+    required bool externalController,
+  }) {
+    return [
+      const PortItem(),
+      _clashToggle(
+        title: (l) => l.allowLan,
+        select: (state) => state.allowLan,
+        update: (state, value) => state.copyWith(allowLan: value),
+      ),
+      _clashToggle(
+        title: (l) => l.externalController,
+        select: (state) =>
+            state.externalController == ExternalControllerStatus.open,
+        update: (state, value) => state
+            .copyWith(
+              externalController: value
+                  ? ExternalControllerStatus.open
+                  : ExternalControllerStatus.close,
+            )
+            .ensureControllerSecret(),
+      ),
+      if (externalController) const ExternalControllerSecretItem(),
+      const AuthenticationItem(),
+      if (authentication) ...const [
+        AuthenticationAccountItem(),
+        AuthenticationPasswordItem(),
+      ],
+    ];
+  }
+
+  List<Widget> _connectionItems() {
+    return [
+      const TestUrlItem(),
+      _clashToggle(
+        title: (l) => l.unifiedDelay,
+        select: (state) => state.unifiedDelay,
+        update: (state, value) => state.copyWith(unifiedDelay: value),
+      ),
+      _clashToggle(
+        title: (l) => l.tcpConcurrent,
+        select: (state) => state.tcpConcurrent,
+        update: (state, value) => state.copyWith(tcpConcurrent: value),
+      ),
+      _clashToggle(
+        title: (l) => l.findProcessMode,
+        select: (state) => state.findProcessMode == FindProcessMode.always,
+        update: (state, value) => state.copyWith(
+          findProcessMode: value ? FindProcessMode.always : FindProcessMode.off,
+        ),
+      ),
+      _appSettingToggle(
+        title: (l) => l.autoCloseConnections,
+        select: (state) => state.closeConnections,
+        update: (state, value) => state.copyWith(closeConnections: value),
+      ),
+      _appSettingToggle(
+        title: (l) => l.onlyStatisticsProxy,
+        select: (state) => state.onlyStatisticsProxy,
+        update: (state, value) => state.copyWith(onlyStatisticsProxy: value),
+      ),
+    ];
+  }
+
+  List<Widget> _requestItems() {
+    return [
+      const UaItem(),
+      _appSettingToggle(
+        title: (l) => l.checkCertificate,
+        select: (state) => state.checkCertificate,
+        update: (state, value) => state.copyWith(checkCertificate: value),
+      ),
+      _appSettingToggle(
+        title: (l) => l.autoCheckUpdate,
+        select: (state) => state.autoCheckUpdate,
+        update: (state, value) => state.copyWith(autoCheckUpdate: value),
+      ),
+    ];
+  }
+
+  List<Widget> _coreItems() {
+    return [
+      _clashToggle(
+        title: (l) => 'IPv6',
+        select: (state) => state.ipv6,
+        update: (state, value) => state.copyWith(ipv6: value),
+      ),
+      const HostsItem(),
+      ConfigToggleItem(
+        title: (l) => l.appendSystemDns,
+        selector: networkSettingProvider.select(
+          (state) => state.appendSystemDns,
+        ),
+        onChanged: (ref, value) => ref
+            .read(networkSettingProvider.notifier)
+            .update((state) => state.copyWith(appendSystemDns: value)),
+      ),
+      _clashToggle(
+        title: (l) => l.geodataLoader,
+        select: (state) => state.geodataLoader == GeodataLoader.memconservative,
+        update: (state, value) => state.copyWith(
+          geodataLoader: value
+              ? GeodataLoader.memconservative
+              : GeodataLoader.standard,
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _logItems() {
+    return [
+      const LogLevelItem(),
+      _appSettingToggle(
+        title: (l) => l.logcat,
+        select: (state) => state.openLogs,
+        update: (state, value) => state.copyWith(openLogs: value),
+      ),
+    ];
+  }
 
   @override
   Widget build(BuildContext context, ref) {
@@ -300,107 +426,60 @@ class GeneralListView extends ConsumerWidget {
     final authentication = ref.watch(
       networkSettingProvider.select((state) => state.authentication.enable),
     );
-    return generateListView([
-      ...generateSection(
-        title: appLocalizations.inbound,
-        isFirst: true,
-        items: [
-          const PortItem(),
-          _clashToggle(
-            icon: Icons.device_hub,
-            title: (l) => l.allowLan,
-            subtitle: (l) => l.allowLanDesc,
-            select: (state) => state.allowLan,
-            update: (state, value) => state.copyWith(allowLan: value),
-          ),
-          _clashToggle(
-            icon: Icons.api_outlined,
-            title: (l) => l.externalController,
-            subtitle: (l) => l.externalControllerDesc,
-            select: (state) =>
-                state.externalController == ExternalControllerStatus.open,
-            update: (state, value) => state.copyWith(
-              externalController: value
-                  ? ExternalControllerStatus.open
-                  : ExternalControllerStatus.close,
-            ),
-          ),
-          const AuthenticationItem(),
-        ],
+    final externalController = ref.watch(
+      patchClashConfigProvider.select(
+        (state) => state.externalController == ExternalControllerStatus.open,
       ),
-      if (authentication)
-        ...generateSection(
-          title: appLocalizations.authentication,
-          items: const [
-            AuthenticationAccountItem(),
-            AuthenticationPasswordItem(),
-          ],
-        ),
-      ...generateSection(
-        title: appLocalizations.other,
-        items: [
-          const LogLevelItem(),
-          const UaItem(),
-          const TestUrlItem(),
-          if (system.isDesktop) const KeepAliveIntervalItem(),
-          const HostsItem(),
-          ConfigToggleItem(
-            leading: const Icon(Icons.dns_outlined),
-            title: (l) => l.appendSystemDns,
-            subtitle: (l) => l.appendSystemDnsTip,
-            selector: networkSettingProvider.select(
-              (state) => state.appendSystemDns,
+    );
+    return BaseScaffold(
+      title: appLocalizations.general,
+      body: ListView(
+        padding: const EdgeInsets.symmetric(
+          horizontal: 16,
+        ).copyWith(top: context.appBarInset, bottom: 16),
+        children: [
+          generateSection(
+            title: appLocalizations.startupAndBackground,
+            items: _startupItems(appLocalizations),
+            footer: [
+              if (system.isDesktop) appLocalizations.silentLaunchDesc,
+              appLocalizations.autoRunDesc,
+              appLocalizations.onDemandDesc,
+            ].join('\n'),
+          ),
+          generateSection(
+            title: appLocalizations.requestsAndUpdates,
+            items: _requestItems(),
+            footer: appLocalizations.checkCertificateDesc,
+          ),
+          generateSection(
+            title: appLocalizations.inbound,
+            items: _inboundItems(
+              authentication: authentication,
+              externalController: externalController,
             ),
-            onChanged: (ref, value) => ref
-                .read(networkSettingProvider.notifier)
-                .update((state) => state.copyWith(appendSystemDns: value)),
+            footer: [
+              appLocalizations.externalControllerDesc,
+              appLocalizations.authenticationDesc,
+            ].join('\n'),
           ),
-          _clashToggle(
-            icon: Icons.water_outlined,
-            title: (l) => 'IPv6',
-            subtitle: (l) => l.ipv6Desc,
-            select: (state) => state.ipv6,
-            update: (state, value) => state.copyWith(ipv6: value),
+          generateSection(
+            title: appLocalizations.connection,
+            items: _connectionItems(),
+            footer: appLocalizations.autoCloseConnectionsDesc,
           ),
-          _clashToggle(
-            icon: Icons.compress_outlined,
-            title: (l) => l.unifiedDelay,
-            subtitle: (l) => l.unifiedDelayDesc,
-            select: (state) => state.unifiedDelay,
-            update: (state, value) => state.copyWith(unifiedDelay: value),
+          generateSection(
+            title: appLocalizations.core,
+            items: _coreItems(),
+            footer: appLocalizations.ipv6Desc,
           ),
-          _clashToggle(
-            icon: Icons.double_arrow_outlined,
-            title: (l) => l.tcpConcurrent,
-            subtitle: (l) => l.tcpConcurrentDesc,
-            select: (state) => state.tcpConcurrent,
-            update: (state, value) => state.copyWith(tcpConcurrent: value),
-          ),
-          _clashToggle(
-            icon: Icons.polymer_outlined,
-            title: (l) => l.findProcessMode,
-            subtitle: (l) => l.findProcessModeDesc,
-            select: (state) => state.findProcessMode == FindProcessMode.always,
-            update: (state, value) => state.copyWith(
-              findProcessMode: value
-                  ? FindProcessMode.always
-                  : FindProcessMode.off,
-            ),
-          ),
-          _clashToggle(
-            icon: Icons.memory,
-            title: (l) => l.geodataLoader,
-            subtitle: (l) => l.geodataLoaderDesc,
-            select: (state) =>
-                state.geodataLoader == GeodataLoader.memconservative,
-            update: (state, value) => state.copyWith(
-              geodataLoader: value
-                  ? GeodataLoader.memconservative
-                  : GeodataLoader.standard,
-            ),
+          generateSection(
+            title: appLocalizations.logsAndDiagnostics,
+            items: _logItems(),
+            footer: appLocalizations.logcatDesc,
           ),
         ],
       ),
-    ]);
+    );
   }
 }
