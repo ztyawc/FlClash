@@ -7797,8 +7797,7 @@ class AppLocalizations {
   String customImportDroppedSubRules(num count, Object label) {
     return Intl.plural(
       count,
-      one:
-          '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
+      one: '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
       other:
           '$label SUB-RULE rules were dropped, since custom profiles do not support sub-rules',
       name: 'customImportDroppedSubRules',
@@ -7835,6 +7834,26 @@ class AppLocalizations {
       desc: '',
       args: [],
     );
+  }
+
+  /// `Game ID`
+  String get gameId {
+    return Intl.message('Game ID', name: 'gameId', desc: '', args: []);
+  }
+
+  /// `Server ID`
+  String get serverId {
+    return Intl.message('Server ID', name: 'serverId', desc: '', args: []);
+  }
+
+  /// `Obfuscation key`
+  String get obfsKey {
+    return Intl.message('Obfuscation key', name: 'obfsKey', desc: '', args: []);
+  }
+
+  /// `SNI encryption`
+  String get sniCrypt {
+    return Intl.message('SNI encryption', name: 'sniCrypt', desc: '', args: []);
   }
 }
 
