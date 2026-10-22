@@ -84,8 +84,8 @@ AAD 为空；AES key 为 ASCII `节点IP:端口`，截取前 16 字节或补 `U`
 
 ```sh
 go test ./transport/uusni ./common/convert ./adapter ./adapter/outbound
-go test -race ./transport/uusni
-go test -race ./adapter ./adapter/outbound ./common/convert -run UUSNI
+CGO_ENABLED=1 go test -race ./transport/uusni
+CGO_ENABLED=1 go test -race ./adapter ./adapter/outbound ./common/convert -run UUSNI
 SKIP_CONCURRENT_TEST=1 SKIP_INTEROP_TEST=1 go test ./...
 go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
 ```
