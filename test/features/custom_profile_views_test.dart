@@ -1201,10 +1201,16 @@ void main() {
     },
   );
 
-  Future<void> pumpNodes(WidgetTester tester, List<CustomProxy> nodes) async {
+  Future<void> pumpNodes(
+    WidgetTester tester,
+    List<CustomProxy> nodes, {
+    CoreHandlerInterface? core,
+  }) async {
     _setViewport(tester);
     final container = ProviderContainer(
       overrides: [
+        if (core != null)
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
         customGroupNamesProvider.overrideWith(
           (_) => Stream.value(const <String>{}),
         ),
@@ -1272,6 +1278,9 @@ void main() {
 
   for (final type in ['uusni', 'qyproxy']) {
     testWidgets('$type exposes its required connection fields', (tester) async {
+      final core = _MockCore();
+      registerFallbackValue(<Map<String, dynamic>>[]);
+      when(() => core.validateProxies(any())).thenAnswer((_) async => ['']);
       await pumpNodes(tester, [
         CustomProxy(
           id: 1,
@@ -1290,7 +1299,7 @@ void main() {
             },
           },
         ),
-      ]);
+      ], core: core);
       await tester.tap(find.text('Custom core'));
       await tester.pumpAndSettle();
 

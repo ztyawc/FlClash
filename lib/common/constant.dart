@@ -114,6 +114,7 @@ const maxLaptopWidth = 840;
 const defaultTestUrl = 'https://www.gstatic.com/generate_204';
 
 const shareLinkSchemes = {
+  'uusni',
   'hysteria',
   'hysteria2',
   'hy2',
