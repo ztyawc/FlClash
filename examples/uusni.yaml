@@ -1,0 +1,34 @@
+# Synthetic parameters only. Fill in your own current UU custom-SNI parameters.
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+
+dns:
+  enable: true
+  listen: 127.0.0.1:1053
+  enhanced-mode: fake-ip
+  respect-rules: true
+  proxy-server-nameserver:
+    - https://1.1.1.1/dns-query
+  nameserver:
+    - https://1.1.1.1/dns-query
+
+proxies:
+  - name: UU 下载 SNI
+    type: uusni
+    server: 203.0.113.10
+    port: 5556
+    obfs-key: 77
+    sni-crypt: true
+    udp: false
+
+proxy-groups:
+  - name: UU-SNI
+    type: select
+    proxies:
+      - UU 下载 SNI
+
+rules:
+  - NETWORK,udp,REJECT
+  - MATCH,UU-SNI

@@ -56,6 +56,7 @@ const (
 	EasyTier
 	GostRelay
 	QyProxy
+	UUSNI
 )
 
 const (
@@ -246,6 +247,8 @@ func (at AdapterType) String() string {
 		return "GostRelay"
 	case QyProxy:
 		return "QyProxy"
+	case UUSNI:
+		return "UUSNI"
 	case Relay:
 		return "Relay"
 	case Selector:

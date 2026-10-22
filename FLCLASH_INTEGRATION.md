@@ -2,7 +2,7 @@
 
 The kernel source is `ztyawc/mihomo-cn2`, pinned by `.cn2-import`.
 The complete CN2 snapshot is retained with the host APIs required by FlClash.
-QyProxy `primary`, `cn2`, `cn2_download`, CMCC SOCKS5 0x80/0x82,
+QyProxy `primary`, `cn2`, `cn2_download`, UU custom SNI TCP, CMCC SOCKS5 0x80/0x82,
 and the guard against replacement by an official kernel remain enabled.
 
 `.flclash-api` identifies the imported FlClash API revision. The FlClash
