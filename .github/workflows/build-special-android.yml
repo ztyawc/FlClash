@@ -132,6 +132,10 @@ jobs:
           go test -count=1 .
           go vet .
 
+      - name: Test CN2 protocols
+        working-directory: core/Clash.Meta
+        run: go test -count=1 -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+
       - name: Analyze
         run: flutter analyze --no-fatal-infos
 

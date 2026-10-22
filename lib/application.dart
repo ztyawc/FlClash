@@ -12,6 +12,7 @@ import 'package:fl_clash/manager/manager.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/ui.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,6 +23,7 @@ Widget buildManagerStack({
   required bool isDesktop,
   required Future<void> Function(List<ConnectivityResult> results)
   onConnectivityChanged,
+  Stream<ProcessSignal>? terminateSignals,
   required Widget child,
 }) {
   final platformApp = isDesktop
@@ -37,6 +39,7 @@ Widget buildManagerStack({
   );
   final platformState = isDesktop
       ? WindowManager(
+          terminateSignals: terminateSignals,
           child: TrayManager(
             child: HotKeyManager(child: ProxyManager(child: state)),
           ),
@@ -59,19 +62,10 @@ class Application extends ConsumerStatefulWidget {
 class ApplicationState extends ConsumerState<Application> {
   Timer? _autoUpdateProfilesTaskTimer;
   bool _preHasVpn = false;
-
-  final _pageTransitionsTheme = const PageTransitionsTheme(
-    builders: <TargetPlatform, PageTransitionsBuilder>{
-      TargetPlatform.android: commonSharedXPageTransitions,
-      TargetPlatform.windows: commonSharedXPageTransitions,
-      TargetPlatform.linux: commonSharedXPageTransitions,
-      TargetPlatform.macOS: commonSharedXPageTransitions,
-    },
-  );
-
-  ColorScheme _getAppColorScheme({required Brightness brightness}) {
-    return ref.read(genColorSchemeProvider(brightness));
-  }
+  // Windows can only watch SIGINT and SIGHUP.
+  final _terminateSignals = system.isDesktop && !system.isWindows
+      ? ProcessSignal.sigterm.watch()
+      : null;
 
   @override
   void initState() {
@@ -85,7 +79,9 @@ class ApplicationState extends ConsumerState<Application> {
       }
       _autoUpdateProfilesTask();
       _initLink();
-      unawaited(app?.initShortcuts());
+      if (!safeModeBuild) {
+        unawaited(app?.initShortcuts());
+      }
     });
   }
 
@@ -113,7 +109,7 @@ class ApplicationState extends ConsumerState<Application> {
       );
       if (res != true) return;
       unawaited(
-        ref.read(profilesActionProvider.notifier).addProfileFormURL(url),
+        ref.read(profilesActionProvider.notifier).addProfileFromLink(url),
       );
     });
   }
@@ -121,6 +117,7 @@ class ApplicationState extends ConsumerState<Application> {
   void _autoUpdateProfilesTask() {
     _autoUpdateProfilesTaskTimer = Timer(const Duration(minutes: 20), () async {
       await ref.read(profilesActionProvider.notifier).autoUpdateProfiles();
+      await ref.read(resourcesActionProvider.notifier).autoUpdate();
       if (!mounted) {
         return;
       }
@@ -136,7 +133,7 @@ class ApplicationState extends ConsumerState<Application> {
     unawaited(ref.read(systemActionProvider.notifier).updateLocalIp());
     final hasVpn = results.contains(ConnectivityResult.vpn);
     if (_preHasVpn == hasVpn) {
-      ref.read(checkIpNumProvider.notifier).add();
+      ref.read(routeTrackerProvider.notifier).bumpHostEpoch();
     }
     _preHasVpn = hasVpn;
   }
@@ -155,18 +152,18 @@ class ApplicationState extends ConsumerState<Application> {
           onNavigationNotification: (_) => true,
           localizationsDelegates: const [
             AppLocalizations.delegate,
+            AppUiLocalizations.delegate,
             ...GlobalMaterialLocalizations.delegates,
           ],
           builder: (context, child) {
-            // The bridge's legacy Theme swaps in its own default IconTheme color,
-            // which material_ui IconButton.filled reads as custom and loses onPrimary.
-            // ignore: deprecated_member_use
-            return MaterialUiCompatibilityBridge(
-              child: IconTheme(
-                data: Theme.of(context).iconTheme,
-                child: buildManagerStack(
-                  isDesktop: system.isDesktop,
-                  onConnectivityChanged: _handleConnectivityChanged,
+            return ThemeCrossFade(
+              child: buildManagerStack(
+                isDesktop: system.isDesktop,
+                onConnectivityChanged: _handleConnectivityChanged,
+                terminateSignals: _terminateSignals,
+                child: RemoteFocusAdapter(
+                  enabled: system.isTV,
+                  floatingKeyboard: app?.floatingKeyboard,
                   child: child!,
                 ),
               ),
@@ -177,19 +174,10 @@ class ApplicationState extends ConsumerState<Application> {
           locale: getLocaleForString(locale),
           supportedLocales: AppLocalizations.delegate.supportedLocales,
           themeMode: themeProps.themeMode,
-          theme: ThemeData(
-            useMaterial3: true,
-            pageTransitionsTheme: _pageTransitionsTheme,
-            colorScheme: _getAppColorScheme(brightness: Brightness.light),
-          ).withAppShapes,
-          darkTheme: ThemeData(
-            useMaterial3: true,
-            pageTransitionsTheme: _pageTransitionsTheme,
-            colorScheme: _getAppColorScheme(
-              brightness: Brightness.dark,
-            ).toPureBlack(themeProps.pureBlack),
-          ).withAppShapes,
-          home: child!,
+          theme: watchAppTheme(ref, Brightness.light),
+          darkTheme: watchAppTheme(ref, Brightness.dark),
+          themeAnimationStyle: AnimationStyle.noAnimation,
+          home: KeyboardInsetHold(child: child!),
         );
       },
       child: const HomePage(),

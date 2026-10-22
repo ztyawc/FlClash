@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:fl_clash/common/exception.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/interface.dart';
@@ -35,9 +37,6 @@ void main() {
     );
     registerFallbackValue(
       const ChangeProxyParams(groupName: 'G', proxyName: 'P'),
-    );
-    registerFallbackValue(
-      const UpdateGeoDataParams(geoType: 't', geoName: 'n'),
     );
   });
 
@@ -108,6 +107,51 @@ void main() {
       verify(() => mock.validateConfig('/path')).called(1);
     });
 
+    group('validateProfile', () {
+      late Directory dir;
+      late String path;
+
+      setUp(() {
+        dir = Directory.systemTemp.createTempSync('validate_profile_test');
+        path = '${dir.path}/profile.yaml';
+        when(() => mock.validateConfig(path)).thenAnswer((_) async => '');
+      });
+
+      tearDown(() => dir.deleteSync(recursive: true));
+
+      test('decrypts an age-encrypted config in place', () async {
+        File(
+          path,
+        ).writeAsStringSync('-----BEGIN AGE ENCRYPTED FILE-----\nYWdl\n');
+        when(
+          () => mock.decryptConfig(path, 'AGE-SECRET-KEY-1A'),
+        ).thenAnswer((_) async => 'proxies: []');
+
+        expect(await controller.validateProfile(path, 'AGE-SECRET-KEY-1A'), '');
+        expect(File(path).readAsStringSync(), 'proxies: []');
+      });
+
+      test('asks for a key an encrypted config lacks', () async {
+        File(
+          path,
+        ).writeAsStringSync('-----BEGIN AGE ENCRYPTED FILE-----\nYWdl\n');
+
+        await expectLater(
+          controller.validateProfile(path),
+          throwsA(isA<AgeSecretKeyRequiredException>()),
+        );
+        verifyNever(() => mock.decryptConfig(any(), any()));
+      });
+
+      test('leaves a plain config as it is', () async {
+        File(path).writeAsStringSync('proxies: []');
+
+        expect(await controller.validateProfile(path, 'AGE-SECRET-KEY-1A'), '');
+        verifyNever(() => mock.decryptConfig(any(), any()));
+        expect(File(path).readAsStringSync(), 'proxies: []');
+      });
+    });
+
     test('updateConfig delegates to interface', () async {
       const params = UpdateParams(
         tun: Tun(enable: false),
@@ -157,9 +201,19 @@ void main() {
   group('proxy methods', () {
     test('changeProxy delegates to interface', () async {
       const params = ChangeProxyParams(groupName: 'G1', proxyName: 'P1');
-      when(() => mock.changeProxy(params)).thenAnswer((_) async => 'ok');
-      final result = await controller.changeProxy(params);
-      expect(result, 'ok');
+      const result = ChangeProxyResult(changed: true);
+      when(() => mock.changeProxy(params)).thenAnswer((_) async => result);
+      expect(await controller.changeProxy(params), result);
+    });
+
+    test('watchRoute delegates to interface', () async {
+      const snapshot = RouteSnapshot(
+        coreEpoch: 3,
+        picksVersion: 1,
+        picks: {'Proxy': 'HK-01'},
+      );
+      when(() => mock.watchRoute(true)).thenAnswer((_) async => snapshot);
+      expect(await controller.watchRoute(true), snapshot);
     });
   });
 
@@ -243,10 +297,12 @@ void main() {
       expect(result.down, 4);
     });
 
-    test('getMemory delegates numeric memory', () async {
-      when(() => mock.getMemory()).thenAnswer((_) async => 2048);
-      final result = await controller.getMemory();
-      expect(result, 2048);
+    test('getMemoryStats delegates the structured stats', () async {
+      when(
+        () => mock.getMemoryStats(),
+      ).thenAnswer((_) async => const CoreMemoryStats(rss: 2048));
+      final result = await controller.getMemoryStats();
+      expect(result?.rss, 2048);
     });
   });
 

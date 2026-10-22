@@ -115,7 +115,7 @@ jobs:
           SKIP_INTEROP_TEST: "1"
         run: |
           go test ./...
-          go test -tags with_gvisor ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./component/updater
+          go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
 
       - name: Push the tested core branch
         if: steps.core-state.outputs.changed == 'true'
