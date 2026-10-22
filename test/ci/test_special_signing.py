@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -85,11 +86,10 @@ class SpecialSigningTest(unittest.TestCase):
             SIGNING.prepare()
         self.assertFalse(self.keystore.exists())
 
-    def verify(self, fingerprint, status=0):
+    def verify(self, output, status=0):
         signer = self.root / 'sdk/build-tools/36.0.0/apksigner'
         signer.parent.mkdir(parents=True, exist_ok=True)
-        signer.write_text(f'#!/bin/sh\nprintf "%s\\n" '
-                          f'"Signer #1 certificate SHA-256 digest: {fingerprint}"\nexit {status}\n')
+        signer.write_text(f'#!/bin/sh\nprintf "%s\\n" {shlex.quote(output)}\nexit {status}\n')
         signer.chmod(0o755)
         apks = [self.root / 'dist' / name for name in ('arm64.apk', 'arm32.apk')]
         for apk in apks:
@@ -98,15 +98,45 @@ class SpecialSigningTest(unittest.TestCase):
             SIGNING.verify(apks)
 
     def test_verified_apks_record_the_fixed_fingerprint(self):
-        self.verify(self.fingerprint)
+        self.verify(f'Signer #1 certificate SHA-256 digest: {self.fingerprint}')
         self.assertEqual((self.root / 'dist/SIGNING_CERTIFICATE_SHA256').read_text(),
                          self.fingerprint + '\n')
+
+    def test_sdk_range_signers_can_repeat_the_same_fixed_certificate(self):
+        for dev_release in ('', ' (dev release=true)'):
+            with self.subTest(dev_release=dev_release):
+                self.verify('\n'.join([
+                    f'Signer (minSdkVersion=33{dev_release}, maxSdkVersion=2147483647) '
+                    f'certificate SHA-256 digest: {self.fingerprint.upper()}',
+                    'Signer (minSdkVersion=24, maxSdkVersion=32) '
+                    f'certificate SHA-256 digest: {self.fingerprint}',
+                    f'Source Stamp Signer certificate SHA-256 digest: {"0" * 64}',
+                ]))
+                self.assertEqual((self.root / 'dist/SIGNING_CERTIFICATE_SHA256').read_text(),
+                                 self.fingerprint + '\n')
+
+    def test_a_different_sdk_range_signer_stops_publication(self):
+        output = '\n'.join([
+            'Signer (minSdkVersion=33, maxSdkVersion=2147483647) '
+            f'certificate SHA-256 digest: {self.fingerprint}',
+            f'Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: {"0" * 64}',
+        ])
+        with self.assertRaisesRegex(ValueError, 'fixed release certificate'):
+            self.verify(output)
+        self.assertFalse((self.root / 'dist/SIGNING_CERTIFICATE_SHA256').exists())
+
+    def test_missing_signer_fingerprints_stop_publication(self):
+        for output in ('Verifies', f'Source Stamp Signer certificate SHA-256 digest: {self.fingerprint}'):
+            with self.subTest(output=output):
+                with self.assertRaisesRegex(ValueError, 'No APK signing certificate'):
+                    self.verify(output)
+                self.assertFalse((self.root / 'dist/SIGNING_CERTIFICATE_SHA256').exists())
 
     def test_different_or_invalid_apk_signatures_stop_publication(self):
         for fingerprint, status in (('0' * 64, 0), (self.fingerprint, 1)):
             with self.subTest(fingerprint=fingerprint, status=status):
                 with self.assertRaises(ValueError):
-                    self.verify(fingerprint, status)
+                    self.verify(f'Signer #1 certificate SHA-256 digest: {fingerprint}', status)
                 self.assertFalse((self.root / 'dist/SIGNING_CERTIFICATE_SHA256').exists())
 
 
