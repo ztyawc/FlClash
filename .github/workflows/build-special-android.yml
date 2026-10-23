@@ -157,12 +157,13 @@ jobs:
       - name: Build all Android ABIs
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: dart setup.dart android -v
+        run: dart setup.dart android --env stable -v
 
       - name: Verify and checksum APKs
         shell: bash
         run: |
           set -euo pipefail
+          python3 -c 'import json; assert json.load(open("env.json")) == {"APP_ENV": "stable"}, "Expected a stable build environment"'
           mapfile -t apks < <(find dist -maxdepth 1 -type f -name '*.apk' -print | sort)
           if [[ "${#apks[@]}" -ne 3 ]]; then
             printf 'Expected 3 APKs, found %s\n' "${#apks[@]}"
@@ -204,7 +205,7 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Create or refresh the prerelease
+      - name: Create or refresh the stable release
         if: toJSON(inputs.publish) != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -218,7 +219,7 @@ jobs:
           tag="special-${version//+/-}-${short_sha}"
           notes="${RUNNER_TEMP}/special-release.md"
           {
-            printf 'FlClash（特供版）自动构建。\n\n'
+            printf 'FlClash（特供版）正式版自动构建。\n\n'
             printf -- '- 应用 ID：`com.follow.clash.dev`，可与官方版共存\n'
             printf -- '- FlClash：`%s`\n' "$commit_sha"
             printf -- '- mihomo-cn2 内核：`%s`\n' "$core_sha"
@@ -229,12 +230,12 @@ jobs:
           } > "$notes"
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release edit "$tag" --title "FlClash 特供版 ${version}" --notes-file "$notes"
+            gh release edit "$tag" --title "FlClash 特供版 ${version}" --notes-file "$notes" --prerelease=false --latest
             gh release upload "$tag" dist/*.apk dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 --clobber
           else
             gh release create "$tag" dist/*.apk dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 \
               --target "$commit_sha" \
               --title "FlClash 特供版 ${version}" \
               --notes-file "$notes" \
-              --prerelease
+              --latest
           fi

@@ -265,7 +265,7 @@ jobs:
         if: steps.pending.outputs.changed == 'true'
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: dart setup.dart android -v
+        run: dart setup.dart android --env stable -v
 
       - name: Verify fixed APK signatures
         if: steps.pending.outputs.changed == 'true'

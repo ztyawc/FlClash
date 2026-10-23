@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -13,14 +14,18 @@ ROOT = Path(__file__).resolve().parents[2]
 def workflow_script(workflow, name):
     content = (ROOT / '.github/workflows' / workflow).read_text()
     step = content.split(f'      - name: {name}\n', 1)[1].split('\n      - name:', 1)[0]
-    return textwrap.dedent(step.split('        run: |\n', 1)[1])
+    script = step.split('        run:', 1)[1]
+    if script.startswith(' |\n'):
+        return textwrap.dedent(script[3:])
+    return script.splitlines()[0].strip()
 
 
 class SpecialAndroidTest(unittest.TestCase):
-    def verify_apks(self, legacy, missing_library=None):
+    def verify_apks(self, legacy, missing_library=None, channel='stable'):
         script = workflow_script('build-special-android.yml', 'Verify and checksum APKs')
         with tempfile.TemporaryDirectory(prefix='flclash-apk-test-') as folder:
             root = Path(folder)
+            (root / 'env.json').write_text(json.dumps({'APP_ENV': channel}))
             if legacy:
                 source = root / 'android/core/src/main/cpp/core.cpp'
                 source.parent.mkdir(parents=True)
@@ -45,7 +50,7 @@ class SpecialAndroidTest(unittest.TestCase):
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root,
                                     env={**os.environ, 'ANDROID_HOME': str(sdk)},
                                     capture_output=True, text=True)
-            if missing_library:
+            if missing_library or channel != 'stable':
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((dist / 'SHA256SUMS').exists())
             else:
@@ -62,6 +67,26 @@ class SpecialAndroidTest(unittest.TestCase):
                                 (False, 'librust_api.so')):
             with self.subTest(legacy=legacy, library=library):
                 self.verify_apks(legacy, missing_library=library)
+
+    def test_prerelease_builds_cannot_be_published(self):
+        for channel in ('pre', 'dev'):
+            with self.subTest(channel=channel):
+                self.verify_apks(False, channel=channel)
+
+    def test_both_android_build_paths_pass_the_stable_channel(self):
+        steps = (('build-special-android.yml', 'Build all Android ABIs'),
+                 ('sync-special.yml', 'Build Android APKs before promotion'))
+        for workflow, name in steps:
+            with self.subTest(workflow=workflow), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                dart = root / 'dart'
+                dart.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+                dart.chmod(0o755)
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', workflow_script(workflow, name)],
+                                        cwd=root, env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'},
+                                        check=True, capture_output=True, text=True)
+                arguments = result.stdout.splitlines()
+                self.assertEqual(arguments[arguments.index('--env') + 1], 'stable')
 
     def test_rust_setup_follows_the_checked_out_toolchain(self):
         for workflow in ('build-special-android.yml', 'sync-special.yml'):
