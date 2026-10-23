@@ -21,7 +21,8 @@ def workflow_script(workflow, name):
 
 
 class SpecialAndroidTest(unittest.TestCase):
-    def verify_apks(self, legacy, missing_library=None, channel='stable'):
+    def verify_apks(self, legacy, missing_library=None, channel='stable',
+                    abis=('arm64-v8a',), extra_abi=None):
         script = workflow_script('build-special-android.yml', 'Verify and checksum APKs')
         with tempfile.TemporaryDirectory(prefix='flclash-apk-test-') as folder:
             root = Path(folder)
@@ -42,20 +43,22 @@ class SpecialAndroidTest(unittest.TestCase):
             libraries = ['libclash.so', 'librust_api.so']
             if legacy:
                 libraries.append('libcore.so')
-            for abi in ('arm64-v8a', 'armeabi-v7a', 'x86_64'):
+            for abi in abis:
                 with zipfile.ZipFile(dist / f'FlClash-{abi}.apk', 'w') as apk:
                     for library in libraries:
                         if library != missing_library:
                             apk.writestr(f'lib/{abi}/{library}', b'native library fixture')
+                    if extra_abi:
+                        apk.writestr(f'lib/{extra_abi}/libclash.so', b'wrong ABI fixture')
             result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root,
                                     env={**os.environ, 'ANDROID_HOME': str(sdk)},
                                     capture_output=True, text=True)
-            if missing_library or channel != 'stable':
+            if missing_library or channel != 'stable' or abis != ('arm64-v8a',) or extra_abi:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((dist / 'SHA256SUMS').exists())
             else:
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(len((dist / 'SHA256SUMS').read_text().splitlines()), 3)
+                self.assertEqual(len((dist / 'SHA256SUMS').read_text().splitlines()), 1)
 
     def test_legacy_and_gomobile_apks_are_verified(self):
         for legacy in (False, True):
@@ -73,9 +76,20 @@ class SpecialAndroidTest(unittest.TestCase):
             with self.subTest(channel=channel):
                 self.verify_apks(False, channel=channel)
 
-    def test_both_android_build_paths_pass_the_stable_channel(self):
-        steps = (('build-special-android.yml', 'Build all Android ABIs'),
-                 ('sync-special.yml', 'Build Android APKs before promotion'))
+    def test_only_one_arm64_apk_can_be_published(self):
+        for abis in ((), ('armeabi-v7a',), ('x86_64',),
+                     ('arm64-v8a', 'armeabi-v7a', 'x86_64')):
+            with self.subTest(abis=abis):
+                self.verify_apks(False, abis=abis)
+
+    def test_universal_apks_cannot_be_published(self):
+        for abi in ('armeabi-v7a', 'x86_64'):
+            with self.subTest(abi=abi):
+                self.verify_apks(False, extra_abi=abi)
+
+    def test_both_android_build_paths_use_stable_arm64(self):
+        steps = (('build-special-android.yml', 'Build Android arm64 APK'),
+                 ('sync-special.yml', 'Build Android arm64 APK before promotion'))
         for workflow, name in steps:
             with self.subTest(workflow=workflow), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
@@ -87,6 +101,7 @@ class SpecialAndroidTest(unittest.TestCase):
                                         check=True, capture_output=True, text=True)
                 arguments = result.stdout.splitlines()
                 self.assertEqual(arguments[arguments.index('--env') + 1], 'stable')
+                self.assertEqual(arguments[arguments.index('--arch') + 1], 'arm64')
 
     def test_rust_setup_follows_the_checked_out_toolchain(self):
         for workflow in ('build-special-android.yml', 'sync-special.yml'):
@@ -103,7 +118,9 @@ class SpecialAndroidTest(unittest.TestCase):
                     result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root,
                                             env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'},
                                             check=True, capture_output=True, text=True)
-                    self.assertEqual(result.stdout.splitlines()[2], version)
+                    arguments = result.stdout.splitlines()
+                    self.assertEqual(arguments[2], version)
+                    self.assertEqual(arguments[arguments.index('--target') + 1], 'aarch64-linux-android')
 
 
 if __name__ == '__main__':

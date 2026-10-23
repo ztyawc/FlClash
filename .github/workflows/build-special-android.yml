@@ -131,7 +131,7 @@ jobs:
       - name: Set up Rust for Android
         run: |
           rust_version="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("plugins/rust_api/rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')"
-          rustup toolchain install "$rust_version" --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          rustup toolchain install "$rust_version" --profile minimal --target aarch64-linux-android
 
       - name: Set up libclang for Rust bindings
         run: bash tool/setup_libclang.sh
@@ -154,10 +154,10 @@ jobs:
       - name: Run Flutter tests
         run: bash tool/test_special_flutter.sh
 
-      - name: Build all Android ABIs
+      - name: Build Android arm64 APK
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: dart setup.dart android --env stable -v
+        run: dart setup.dart android --env stable --arch arm64 -v
 
       - name: Verify and checksum APKs
         shell: bash
@@ -165,8 +165,8 @@ jobs:
           set -euo pipefail
           python3 -c 'import json; assert json.load(open("env.json")) == {"APP_ENV": "stable"}, "Expected a stable build environment"'
           mapfile -t apks < <(find dist -maxdepth 1 -type f -name '*.apk' -print | sort)
-          if [[ "${#apks[@]}" -ne 3 ]]; then
-            printf 'Expected 3 APKs, found %s\n' "${#apks[@]}"
+          if [[ "${#apks[@]}" -ne 1 ]]; then
+            printf 'Expected 1 arm64 APK, found %s\n' "${#apks[@]}"
             printf '%s\n' "${apks[@]}"
             exit 1
           fi
@@ -181,8 +181,10 @@ jobs:
             grep -F "package: name='com.follow.clash.dev'" <<< "$badging"
             grep -F "application-label:'FlClash（特供版）'" <<< "$badging"
             libraries="$(unzip -Z1 "$apk")"
+            abis="$(sed -n 's@^lib/\([^/]*\)/.*@\1@p' <<< "$libraries" | sort -u)"
+            test "$abis" = arm64-v8a
             for library in "${native_libraries[@]}"; do
-              grep -E "^lib/(arm64-v8a|armeabi-v7a|x86_64)/${library//./\\.}$" <<< "$libraries"
+              grep -Fx "lib/arm64-v8a/$library" <<< "$libraries"
             done
           done
           sha256sum "${apks[@]}" > dist/SHA256SUMS
@@ -220,6 +222,7 @@ jobs:
           notes="${RUNNER_TEMP}/special-release.md"
           {
             printf 'FlClash（特供版）正式版自动构建。\n\n'
+            printf -- '- Android 架构：`arm64-v8a`\n'
             printf -- '- 应用 ID：`com.follow.clash.dev`，可与官方版共存\n'
             printf -- '- FlClash：`%s`\n' "$commit_sha"
             printf -- '- mihomo-cn2 内核：`%s`\n' "$core_sha"

@@ -216,7 +216,7 @@ jobs:
       - name: Set up Rust for Android
         run: |
           rust_version="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("plugins/rust_api/rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')"
-          rustup toolchain install "$rust_version" --profile minimal --target aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          rustup toolchain install "$rust_version" --profile minimal --target aarch64-linux-android
 
       - name: Set up libclang for Rust bindings
         run: bash tool/setup_libclang.sh
@@ -261,11 +261,11 @@ jobs:
         if: steps.pending.outputs.changed == 'true'
         run: bash tool/test_special_flutter.sh
 
-      - name: Build Android APKs before promotion
+      - name: Build Android arm64 APK before promotion
         if: steps.pending.outputs.changed == 'true'
         env:
           ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: dart setup.dart android --env stable -v
+        run: dart setup.dart android --env stable --arch arm64 -v
 
       - name: Verify fixed APK signatures
         if: steps.pending.outputs.changed == 'true'
