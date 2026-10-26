@@ -1,15 +1,6 @@
 name: Sync special edition
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/sync-special.yml
-      - .github/workflows/build-special-android.yml
-      - test/ci/**
-  schedule:
-    - cron: "37 20 * * *"
   workflow_dispatch:
 
 permissions:
