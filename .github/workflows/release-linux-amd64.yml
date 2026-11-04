@@ -1,0 +1,117 @@
+name: Release Ubuntu x86_64
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to build (for example v0.1.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-linux-amd64-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GOTOOLCHAIN: local
+      SKIP_CONCURRENT_TEST: "1"
+      SKIP_INTEROP_TEST: "1"
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.26.8"
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test QyProxy, CMCC and UU SNI with gVisor
+        run: go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+
+      - name: Build Linux amd64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+          GOAMD64: v1
+        shell: bash
+        run: |
+          mkdir -p dist
+          build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          go build -tags with_gvisor -trimpath \
+            -ldflags "-X github.com/metacubex/mihomo/constant.Version=$RELEASE_TAG -X github.com/metacubex/mihomo/constant.BuildTime=$build_time -w -s -buildid=" \
+            -o "dist/mihomo-cn2-linux-amd64-$RELEASE_TAG" .
+
+      - name: Verify executable and example configurations
+        shell: bash
+        run: |
+          binary="dist/mihomo-cn2-linux-amd64-$RELEASE_TAG"
+          "$binary" -v
+          file "$binary"
+          readelf -h "$binary"
+          if readelf -l "$binary" | grep -q INTERP; then
+            echo "Expected a static executable without a dynamic loader" >&2
+            exit 1
+          fi
+          for config in examples/qyproxy.yaml examples/uusni.yaml; do
+            "$binary" -t -d "$RUNNER_TEMP/mihomo-smoke" -f "$config"
+          done
+
+      - name: Package and checksum
+        working-directory: dist
+        shell: bash
+        run: |
+          gzip -n -9 "mihomo-cn2-linux-amd64-$RELEASE_TAG"
+          sha256sum "mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          适用于 Ubuntu / Linux x86_64 的 mihomo-cn2 内核，由 GitHub Actions 编译并发布。
+
+          - Linux amd64，使用 v1 指令集，启用 `with_gvisor`，`CGO_ENABLED=0` 静态编译。
+          - 保留 QyProxy 主线 / CN2 / CN2 下载、UU 自定义 SNI/TCP 和 CMCC SOCKS5 功能。
+          - 发布前通过完整 Go 测试、gVisor 协议回归、可执行文件启动和示例配置校验。
+          - 下载 `.gz` 与 `SHA256SUMS`，执行 `sha256sum -c SHA256SUMS` 校验，使用 `gzip -d` 解压后添加执行权限。
+          - 将解压后的文件重命名为 `mihomo`，运行 `chmod +x mihomo`、`./mihomo -v`，再使用 `./mihomo -f config.yaml` 启动。节点参数需自行填写。
+
+          协议说明与配置示例见仓库 README、QYPROXY.md、CMCC_SOCKS5.md 和 UUSNI.md。
+          EOF
+          printf '\n源码提交：`%s`。\n' "$(git rev-parse HEAD)" >> "$RUNNER_TEMP/release-notes.md"
+          printf '\n[GitHub Actions 构建记录](%s/%s/actions/runs/%s)\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$RUNNER_TEMP/release-notes.md"
+          gh release create "$RELEASE_TAG" \
+            "dist/mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" dist/SHA256SUMS \
+            --verify-tag --latest \
+            --title "$RELEASE_TAG · Ubuntu x86_64 内核" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

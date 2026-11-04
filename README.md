@@ -42,6 +42,21 @@ UDP 数据包。游戏 ID、区服 ID、区域和节点地址须以自己的有�
 
 ## 构建和运行
 
+Ubuntu x86_64 可从 [Releases](https://github.com/ztyawc/mihomo-cn2/releases)
+下载 `mihomo-cn2-linux-amd64-<版本>.gz` 和对应的 `SHA256SUMS`。
+Linux amd64 发布使用 v1 指令集、`with_gvisor` 和纯 Go 静态编译。
+以 `v0.1.1` 为例，在下载目录运行：
+
+```sh
+sha256sum -c SHA256SUMS
+gzip -dk mihomo-cn2-linux-amd64-v0.1.1.gz
+mv mihomo-cn2-linux-amd64-v0.1.1 mihomo
+chmod +x mihomo
+./mihomo -v
+# 准备 config.yaml，填入自己的节点参数
+./mihomo -f config.yaml
+```
+
 本次适配使用 Go 1.26.8 验证。保留原 Go module 路径以兼容内部导入。
 
 ```sh
@@ -88,8 +103,11 @@ SKIP_CONCURRENT_TEST=1 SKIP_INTEROP_TEST=1 go test ./...
 go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
 ```
 
-GitHub Actions 在 main 的 push、PR 和手动触发时运行测试及 Windows 交叉编译。
-当前不自动同步上游、不自动发布 Release。
+GitHub Actions 在 main 的 push、PR 和手动触发时运行测试及 Windows / Android
+交叉编译。推送 `v<主版本>.<次版本>.<修订版本>` 标签时，发布流程会测试、构建
+Ubuntu x86_64 内核，校验示例配置并将 GZ 和 SHA256SUMS 发布到 GitHub Releases。
+也可手动运行 `Release Ubuntu x86_64`，填写尚未发布 Release 的现有版本标签。
+当前不自动同步上游。
 
 ## 来源和许可
 
