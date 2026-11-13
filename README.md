@@ -1,6 +1,6 @@
 # mihomo-cn2
 
-支持 QyProxy 游戏主线、CN2、CN2 下载和 UU 自定义 SNI/TCP 的定制 mihomo
+支持 QyProxy 游戏主线、CN2、CN2 下载、UU 自定义 SNI/TCP 和 VK S6 下载 TCP 的定制 mihomo
 内核，同时保留 CMCC SOCKS5 `0x80` / `0x82` 支持。
 
 ## 功能与配置
@@ -13,6 +13,10 @@
   和 `uusni://` 订阅转换，不需要 UU、LSPosed、旧原生库或本地中转进程。
   参数说明和限制见 [UUSNI.md](UUSNI.md)，配置见
   [examples/uusni.yaml](examples/uusni.yaml)。
+- `type: vk-s6`：原生 VK 下载 IPv4/TCP 出站，使用当前会话凭据，
+  不支持游戏 UDP；配置与线格式见 [VKS6.md](VKS6.md)，示例见
+  [examples/vks6.yaml](examples/vks6.yaml)。完整协议证据与移植细节见
+  [VK-S6-PORTING.md](VK-S6-PORTING.md)。
 
 [三线路示例配置](examples/qyproxy.yaml) 中的账号、密码、SN 均为占位内容。
 下列节点放在配置的 `proxies:` 下，替换为自己当前有效的参数：
@@ -42,15 +46,16 @@ UDP 数据包。游戏 ID、区服 ID、区域和节点地址须以自己的有�
 
 ## 构建和运行
 
-Ubuntu x86_64 可从 [Releases](https://github.com/ztyawc/mihomo-cn2/releases)
-下载 `mihomo-cn2-linux-amd64-<版本>.gz` 和对应的 `SHA256SUMS`。
+Linux amd64、Windows amd64 和 Android arm64 CLI 可从
+[Releases](https://github.com/ztyawc/mihomo-cn2/releases) 下载对应平台的
+`.gz` 或 `.zip` 包及 `SHA256SUMS`。Android 包是命令行可执行文件，非 APK。
 Linux amd64 发布使用 v1 指令集、`with_gvisor` 和纯 Go 静态编译。
-以 `v0.1.1` 为例，在下载目录运行：
+以 `v0.2.0` 的 Linux 包为例，在下载目录运行：
 
 ```sh
-sha256sum -c SHA256SUMS
-gzip -dk mihomo-cn2-linux-amd64-v0.1.1.gz
-mv mihomo-cn2-linux-amd64-v0.1.1 mihomo
+sha256sum -c SHA256SUMS --ignore-missing
+gzip -dk mihomo-cn2-linux-amd64-v0.2.0.gz
+mv mihomo-cn2-linux-amd64-v0.2.0 mihomo
 chmod +x mihomo
 ./mihomo -v
 # 准备 config.yaml，填入自己的节点参数
@@ -100,13 +105,15 @@ UU SNI 另外覆盖独立线格式向量、短写、取消/关闭、FIN、域名
 
 ```sh
 SKIP_CONCURRENT_TEST=1 SKIP_INTEROP_TEST=1 go test ./...
-go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+go test -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+go test ./transport/vks6 ./adapter ./adapter/outbound
 ```
 
 GitHub Actions 在 main 的 push、PR 和手动触发时运行测试及 Windows / Android
 交叉编译。推送 `v<主版本>.<次版本>.<修订版本>` 标签时，发布流程会测试、构建
-Ubuntu x86_64 内核，校验示例配置并将 GZ 和 SHA256SUMS 发布到 GitHub Releases。
-也可手动运行 `Release Ubuntu x86_64`，填写尚未发布 Release 的现有版本标签。
+Linux amd64、Windows amd64 和 Android arm64 CLI，校验示例配置并将
+平台包和 SHA256SUMS 发布到 GitHub Releases。也可手动运行
+`Release Linux, Windows and Android kernels`，填写尚未发布 Release 的现有版本标签。
 当前不自动同步上游。
 
 ## 来源和许可

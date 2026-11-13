@@ -1,4 +1,4 @@
-name: Release Ubuntu x86_64
+name: Release Linux, Windows and Android kernels
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-linux-amd64-${{ inputs.tag || github.ref_name }}
+  group: release-kernels-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -50,8 +50,8 @@ jobs:
       - name: Test
         run: go test ./...
 
-      - name: Test QyProxy, CMCC and UU SNI with gVisor
-        run: go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+      - name: Test custom protocols with gVisor
+        run: go test -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
 
       - name: Build Linux amd64
         env:
@@ -67,6 +67,31 @@ jobs:
             -ldflags "-X github.com/metacubex/mihomo/constant.Version=$RELEASE_TAG -X github.com/metacubex/mihomo/constant.BuildTime=$build_time -w -s -buildid=" \
             -o "dist/mihomo-cn2-linux-amd64-$RELEASE_TAG" .
 
+      - name: Build Windows amd64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+          GOAMD64: v1
+        shell: bash
+        run: |
+          build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          go build -tags with_gvisor -trimpath \
+            -ldflags "-X github.com/metacubex/mihomo/constant.Version=$RELEASE_TAG -X github.com/metacubex/mihomo/constant.BuildTime=$build_time -w -s -buildid=" \
+            -o "dist/mihomo-cn2-windows-amd64-$RELEASE_TAG.exe" .
+
+      - name: Build Android arm64 CLI
+        env:
+          CGO_ENABLED: "0"
+          GOOS: android
+          GOARCH: arm64
+        shell: bash
+        run: |
+          build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          go build -tags with_gvisor -trimpath \
+            -ldflags "-X github.com/metacubex/mihomo/constant.Version=$RELEASE_TAG -X github.com/metacubex/mihomo/constant.BuildTime=$build_time -w -s -buildid=" \
+            -o "dist/mihomo-cn2-android-arm64-$RELEASE_TAG" .
+
       - name: Verify executable and example configurations
         shell: bash
         run: |
@@ -78,7 +103,7 @@ jobs:
             echo "Expected a static executable without a dynamic loader" >&2
             exit 1
           fi
-          for config in examples/qyproxy.yaml examples/uusni.yaml; do
+          for config in examples/qyproxy.yaml examples/uusni.yaml examples/vks6.yaml; do
             "$binary" -t -d "$RUNNER_TEMP/mihomo-smoke" -f "$config"
           done
 
@@ -87,7 +112,12 @@ jobs:
         shell: bash
         run: |
           gzip -n -9 "mihomo-cn2-linux-amd64-$RELEASE_TAG"
-          sha256sum "mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" > SHA256SUMS
+          zip -q -9 "mihomo-cn2-windows-amd64-$RELEASE_TAG.zip" "mihomo-cn2-windows-amd64-$RELEASE_TAG.exe"
+          rm "mihomo-cn2-windows-amd64-$RELEASE_TAG.exe"
+          gzip -n -9 "mihomo-cn2-android-arm64-$RELEASE_TAG"
+          sha256sum "mihomo-cn2-android-arm64-$RELEASE_TAG.gz" \
+            "mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" \
+            "mihomo-cn2-windows-amd64-$RELEASE_TAG.zip" > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Publish GitHub Release
@@ -97,22 +127,25 @@ jobs:
         shell: bash
         run: |
           cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
-          适用于 Ubuntu / Linux x86_64 的 mihomo-cn2 内核，由 GitHub Actions 编译并发布。
+          mihomo-cn2 内核，由 GitHub Actions 编译并发布。
 
-          - Linux amd64，使用 v1 指令集，启用 `with_gvisor`，`CGO_ENABLED=0` 静态编译。
-          - 保留 QyProxy 主线 / CN2 / CN2 下载、UU 自定义 SNI/TCP 和 CMCC SOCKS5 功能。
-          - 发布前通过完整 Go 测试、gVisor 协议回归、可执行文件启动和示例配置校验。
-          - 下载 `.gz` 与 `SHA256SUMS`，执行 `sha256sum -c SHA256SUMS` 校验，使用 `gzip -d` 解压后添加执行权限。
-          - 将解压后的文件重命名为 `mihomo`，运行 `chmod +x mihomo`、`./mihomo -v`，再使用 `./mihomo -f config.yaml` 启动。节点参数需自行填写。
+          - Linux amd64：v1 指令集、`with_gvisor`、`CGO_ENABLED=0` 静态编译，`.gz` 包。
+          - Windows amd64：`with_gvisor`、`CGO_ENABLED=0`，`.zip` 包。
+          - Android arm64：`with_gvisor`、`CGO_ENABLED=0`，CLI 可执行文件 `.gz` 包，非 APK。
+          - 支持 QyProxy 主线 / CN2 / CN2 下载、UU 自定义 SNI/TCP、VK S6 下载 TCP 和 CMCC SOCKS5。
+          - 发布前通过完整 Go 测试、gVisor 协议回归、Linux 可执行文件启动和三种示例配置校验。
+          - 下载所需平台文件与 `SHA256SUMS`，校验摘要后解压；Linux / Android 需添加执行权限。节点参数需自行填写。
 
-          协议说明与配置示例见仓库 README、QYPROXY.md、CMCC_SOCKS5.md 和 UUSNI.md。
+          协议说明与配置示例见仓库 README、QYPROXY.md、CMCC_SOCKS5.md、UUSNI.md 和 VKS6.md。
           EOF
           printf '\n源码提交：`%s`。\n' "$(git rev-parse HEAD)" >> "$RUNNER_TEMP/release-notes.md"
           printf '\n构建工具链：`%s`。\n' "$(go version)" >> "$RUNNER_TEMP/release-notes.md"
           printf '\n[GitHub Actions 构建记录](%s/%s/actions/runs/%s)\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$RUNNER_TEMP/release-notes.md"
           gh release create "$RELEASE_TAG" \
-            "dist/mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" dist/SHA256SUMS \
+            "dist/mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" \
+            "dist/mihomo-cn2-windows-amd64-$RELEASE_TAG.zip" \
+            "dist/mihomo-cn2-android-arm64-$RELEASE_TAG.gz" dist/SHA256SUMS \
             --verify-tag --latest \
-            --title "$RELEASE_TAG · Ubuntu x86_64 内核" \
+            --title "$RELEASE_TAG · VK S6 / UU SNI / QyProxy / CMCC 内核" \
             --notes-file "$RUNNER_TEMP/release-notes.md"

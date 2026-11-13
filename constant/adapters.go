@@ -57,6 +57,7 @@ const (
 	GostRelay
 	QyProxy
 	UUSNI
+	VKS6
 )
 
 const (
@@ -248,6 +249,8 @@ func (at AdapterType) String() string {
 		return "QyProxy"
 	case UUSNI:
 		return "UUSNI"
+	case VKS6:
+		return "VKS6"
 	case Relay:
 		return "Relay"
 	case Selector:

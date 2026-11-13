@@ -3,14 +3,45 @@ package outbound
 import (
 	"bytes"
 	"context"
+	"errors"
+	"math"
 	"net"
 	"net/netip"
+	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/socks5"
 )
+
+// Preserve raw numeric proxy options: weak decoding may otherwise truncate a
+// fractional port or key before constructor validation sees it.
+func strictUnsignedInteger(value any, max uint64) (int, error) {
+	v := reflect.ValueOf(value)
+	var text string
+	if v.IsValid() {
+		switch v.Kind() {
+		case reflect.String:
+			text = strings.TrimSpace(v.String())
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			text = strconv.FormatInt(v.Int(), 10)
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			text = strconv.FormatUint(v.Uint(), 10)
+		case reflect.Float32, reflect.Float64:
+			n := v.Float()
+			if n >= 0 && n <= float64(max) && n == math.Trunc(n) {
+				return int(n), nil
+			}
+		}
+	}
+	n, err := strconv.ParseUint(text, 10, 64)
+	if err != nil || n > max {
+		return 0, errors.New("an explicit decimal integer in range is required")
+	}
+	return int(n), nil
+}
 
 func serializesSocksAddr(metadata *C.Metadata) []byte {
 	var buf [][]byte
