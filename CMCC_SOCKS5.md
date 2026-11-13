@@ -30,10 +30,11 @@ builds, protocol limits, and verification status.
 
 The built-in core upgrade is disabled to preserve the custom protocols.
 GitHub Actions runs tests and Windows/Android cross-builds. Version tags trigger
-the Ubuntu x86_64 release workflow, including tests, a static Linux amd64 build,
-example configuration checks, and GZ/SHA256SUMS publication. Version v0.1.2 adds
-VK S6 to the Linux release alongside QyProxy, CMCC, and UU SNI. Upstream changes
-are not merged automatically.
+the multi-platform release workflow, including tests, Linux amd64 / Windows amd64 /
+Android arm64 builds, Linux example configuration checks, and GZ/ZIP/SHA256SUMS
+publication. Version v0.1.3 includes VK S6 alongside QyProxy, CMCC, and UU SNI on
+all three platforms. Android artifacts are CLI executables, not APKs. Upstream
+changes are not merged automatically.
 
 Optional live tests use environment variables supplied locally. No live
 credentials are stored in this repository or configured in its CI.

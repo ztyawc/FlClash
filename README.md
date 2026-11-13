@@ -51,32 +51,45 @@ UDP 数据包。游戏 ID、区服 ID、区域和节点地址须以自己的有�
 
 ### 版本与下载
 
-`v0.1.2` 的 Ubuntu x86_64 发布内核加入 VK S6，包含上表四类专用协议。
+`v0.1.3` 的 Linux、Windows 和 Android 发布内核加入 VK S6，包含上表四类专用协议。
 此前的 `v0.1.1` 包含 QyProxy、CMCC 和 UU SNI；需要 VK S6 时使用
-`v0.1.2` 或更新的定制构建。
+`v0.1.3` 或更新的定制构建。
 
-Ubuntu x86_64 可从 [Releases](https://github.com/ztyawc/mihomo-cn2/releases)
-下载 `mihomo-cn2-linux-amd64-<版本>.gz` 和对应的 `SHA256SUMS`。
-Linux amd64 发布使用 v1 指令集、`with_gvisor` 和纯 Go 静态编译。
+从 [Releases](https://github.com/ztyawc/mihomo-cn2/releases) 按系统选择附件，
+同时下载对应的 `SHA256SUMS`：
+
+| 系统 | 架构 | v0.1.3 附件 | 使用方式 |
+| --- | --- | --- | --- |
+| Ubuntu / Linux | x86_64 / amd64 | `mihomo-cn2-linux-amd64-v0.1.3.gz` | 解压、添加执行权限，直接运行或作为 systemd 服务 |
+| Windows | x86_64 / amd64 | `mihomo-cn2-windows-amd64-v0.1.3.zip` | 解压得到 `mihomo.exe`，直接运行或替换客户端内核 |
+| Android | arm64 | `mihomo-cn2-android-arm64-v0.1.3.gz` | 解压后作为 CLI 内核运行或交给支持替换内核的客户端；不是 APK |
+
+三个平台均启用 `with_gvisor` 和 `CGO_ENABLED=0`，Linux / Windows amd64
+使用 v1 指令集。Linux 附件为静态可执行文件。
 仓库为私有时，需登录有权限的 GitHub 账号下载附件；也可通过已登录的
 GitHub CLI 下载：
 
 ```sh
-gh release download v0.1.2 --repo ztyawc/mihomo-cn2 \
-  -p mihomo-cn2-linux-amd64-v0.1.2.gz -p SHA256SUMS
+gh release download v0.1.3 --repo ztyawc/mihomo-cn2 \
+  -p mihomo-cn2-linux-amd64-v0.1.3.gz -p SHA256SUMS
 ```
 
-在下载目录校验并运行：
+以下以 Ubuntu / Linux x86_64 为例，在下载目录校验并运行：
 
 ```sh
-sha256sum -c SHA256SUMS
-gzip -dk mihomo-cn2-linux-amd64-v0.1.2.gz
-mv mihomo-cn2-linux-amd64-v0.1.2 mihomo
+sha256sum --ignore-missing -c SHA256SUMS
+gzip -dk mihomo-cn2-linux-amd64-v0.1.3.gz
+mv mihomo-cn2-linux-amd64-v0.1.3 mihomo
 chmod +x mihomo
 ./mihomo -v
 # 准备 config.yaml，填入自己的节点参数
 ./mihomo -f config.yaml
 ```
+
+Windows 解压 ZIP 后可执行 `mihomo.exe -v` 和 `mihomo.exe -f config.yaml`；
+也可用 PowerShell 的 `Get-FileHash <附件路径> -Algorithm SHA256` 对照
+`SHA256SUMS` 中对应附件的哈希。Android 需要相容的运行环境或客户端接入，
+Android CLI 构建通过不等于真机或 APK 验证。
 
 ### 从源码构建
 
@@ -164,11 +177,12 @@ go test ./transport/vks6 ./adapter ./adapter/outbound
 GitHub Actions 在 main 的 push、PR 和手动触发时运行测试及 Windows / Android
 交叉编译，并对 UU SNI / VK S6 执行竞态检测。推送
 `v<主版本>.<次版本>.<修订版本>` 标签时，发布流程会运行完整 Go 测试、四类
-专用协议的 gVisor 回归及 UU SNI / VK S6 竞态检测，构建 Ubuntu x86_64
-内核，校验 QyProxy、UU SNI 和 VK S6 示例配置，生成 GZ 与 SHA256SUMS 并
-发布到 GitHub Releases。此发布流程提供 Linux amd64 附件；Windows / Android
-在常规 CI 中做交叉编译检查。
-也可手动运行 `Release Ubuntu x86_64`，填写尚未发布 Release 的现有版本标签。
+专用协议的 gVisor 回归及 UU SNI / VK S6 竞态检测，再从同一源码提交并行构建
+Linux amd64、Windows amd64 和 Android arm64 内核。Linux 构建会校验
+QyProxy、UU SNI 和 VK S6 示例配置；所有平台成功后统一生成 GZ / ZIP
+和 SHA256SUMS，发布到同一个 GitHub Release。
+也可手动运行 `Release Linux, Windows and Android`，填写尚未发布 Release
+的现有版本标签。
 当前不自动同步上游。
 
 ## 来源和许可

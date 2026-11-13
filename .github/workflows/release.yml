@@ -1,0 +1,201 @@
+name: Release Linux, Windows and Android
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to build (for example v0.1.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  GOTOOLCHAIN: local
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      build_time: ${{ steps.source.outputs.build_time }}
+      go_version: ${{ steps.toolchain.outputs.version }}
+    env:
+      SKIP_CONCURRENT_TEST: "1"
+      SKIP_INTEROP_TEST: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release tag and record source
+        id: source
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'build_time=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.26"
+          cache: true
+
+      - name: Record Go toolchain
+        id: toolchain
+        run: printf 'version=%s\n' "$(go version)" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test custom protocols with gVisor
+        run: go test -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+
+      - name: Test UU SNI and VK S6 with race detector
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          go test -race ./transport/uusni ./transport/vks6
+          go test -race ./adapter ./adapter/outbound ./common/convert -run 'UUSNI|VKS6'
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+          - target: android-arm64
+            goos: android
+            goarch: arm64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      GOAMD64: v1
+      TARGET: ${{ matrix.target }}
+      BUILD_TIME: ${{ needs.test.outputs.build_time }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.test.outputs.source_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-download-base-url: "https://github.com/MetaCubeX/go/releases/download/build"
+          go-version: "1.26"
+          cache: true
+
+      - name: Build and inspect executable
+        shell: bash
+        run: |
+          binary="$RUNNER_TEMP/mihomo"
+          if [[ "$GOOS" == windows ]]; then
+            binary="$RUNNER_TEMP/mihomo.exe"
+          fi
+          go build -tags with_gvisor -trimpath \
+            -ldflags "-X github.com/metacubex/mihomo/constant.Version=$RELEASE_TAG -X github.com/metacubex/mihomo/constant.BuildTime=$BUILD_TIME -w -s -buildid=" \
+            -o "$binary" .
+          file "$binary"
+          go version -m "$binary"
+          if [[ "$GOOS" == linux ]]; then
+            "$binary" -v
+            if readelf -l "$binary" | grep -q INTERP; then
+              echo "Expected a static Linux executable without a dynamic loader" >&2
+              exit 1
+            fi
+            for config in examples/qyproxy.yaml examples/uusni.yaml examples/vks6.yaml; do
+              "$binary" -t -d "$RUNNER_TEMP/mihomo-smoke" -f "$config"
+            done
+          fi
+          mkdir -p dist
+          if [[ "$GOOS" == windows ]]; then
+            zip -j -9 "dist/mihomo-cn2-$TARGET-$RELEASE_TAG.zip" "$binary"
+          else
+            gzip -n -9 -c "$binary" > "dist/mihomo-cn2-$TARGET-$RELEASE_TAG.gz"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kernel-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: [test, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GO_VERSION: ${{ needs.test.outputs.go_version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.test.outputs.source_sha }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: kernel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release packages and checksum
+        working-directory: dist
+        shell: bash
+        run: |
+          test -s "mihomo-cn2-linux-amd64-$RELEASE_TAG.gz"
+          test -s "mihomo-cn2-windows-amd64-$RELEASE_TAG.zip"
+          test -s "mihomo-cn2-android-arm64-$RELEASE_TAG.gz"
+          sha256sum "mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" \
+            "mihomo-cn2-windows-amd64-$RELEASE_TAG.zip" \
+            "mihomo-cn2-android-arm64-$RELEASE_TAG.gz" > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          cp .github/release-notes.md "$RUNNER_TEMP/release-notes.md"
+          for doc in README.md QYPROXY.md CMCC_SOCKS5.md UUSNI.md VKS6.md VK-S6-PORTING.md; do
+            printf '\n[%s](%s/%s/blob/%s/%s)\n' \
+              "$doc" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$doc" >> "$RUNNER_TEMP/release-notes.md"
+          done
+          printf '\n源码提交：`%s`。\n' "$(git rev-parse HEAD)" >> "$RUNNER_TEMP/release-notes.md"
+          printf '\n构建工具链：`%s`。\n' "$GO_VERSION" >> "$RUNNER_TEMP/release-notes.md"
+          printf '\n[GitHub Actions 构建记录](%s/%s/actions/runs/%s)\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$RUNNER_TEMP/release-notes.md"
+          gh release create "$RELEASE_TAG" \
+            "dist/mihomo-cn2-linux-amd64-$RELEASE_TAG.gz" \
+            "dist/mihomo-cn2-windows-amd64-$RELEASE_TAG.zip" \
+            "dist/mihomo-cn2-android-arm64-$RELEASE_TAG.gz" dist/SHA256SUMS \
+            --verify-tag --latest \
+            --title "$RELEASE_TAG · QyProxy / CMCC / UU SNI / VK S6 · Linux / Windows / Android" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"

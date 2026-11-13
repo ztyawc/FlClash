@@ -9,13 +9,15 @@
 
 ## 发布内核
 
-从 `v0.1.2` 起，[GitHub Releases](https://github.com/ztyawc/mihomo-cn2/releases)
-提供包含 VK S6 的 Ubuntu / Linux x86_64 静态内核；`v0.1.1` 尚不包含此协议。
+从 `v0.1.3` 起，[GitHub Releases](https://github.com/ztyawc/mihomo-cn2/releases)
+提供包含 VK S6 的 Linux amd64、Windows amd64 和 Android arm64 内核；
+`v0.1.1` 尚不包含此协议。
 下载、SHA256 校验与运行步骤见 [README.md](README.md)。发布前会执行
 VK S6 的普通测试、gVisor 回归、竞态检测及示例配置校验。
 
-Windows amd64 和 Android arm64 CLI 可从同一源码构建，常规 CI 做交叉编译
-检查。上述 Linux 发布附件不能直接作为 Windows 可执行文件或 Android APK 使用。
+Windows ZIP 解压后得到 `mihomo.exe`；Android GZ 解压后是 arm64 CLI 内核，
+需相容的运行环境或支持替换核心的客户端。Android 附件不是 APK，构建通过
+不代表 Android 真机互通验证。三个平台的附件和用法见 README 下载表。
 
 ## 配置
 

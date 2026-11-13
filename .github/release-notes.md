@@ -1,4 +1,5 @@
-适用于 Ubuntu / Linux x86_64 的 mihomo-cn2 定制内核，由 GitHub Actions 构建并发布。
+适用于 Linux amd64、Windows amd64 和 Android arm64 的 mihomo-cn2 定制内核，
+由 GitHub Actions 从同一源码提交构建并发布。
 
 ## 支持的专用协议
 
@@ -9,22 +10,29 @@
 | UU 自定义 SNI | `type: uusni` | IPv4 下载 TCP、custom-SNI、无外层 TLS；支持 `uusni://` 转换，不支持 UDP |
 | VK S6 下载 | `type: vk-s6` | IPv4/TCP、当前会话用户名密码、可配置端口范围；不支持游戏 UDP、IPv6 或凭据自动更新 |
 
-从 v0.1.2 起，Linux 发布内核加入 VK S6；此前 v0.1.1 不包含 VK S6。
+v0.1.3 在 Linux、Windows 和 Android 发布内核中加入 VK S6；此前 v0.1.1 不包含 VK S6。
 四类专用节点均由 Go 原生实现，账号、节点和会话参数需自行提供。
 
 ## 下载和运行
 
-- 附件为 Linux amd64，使用 `GOAMD64=v1`、`with_gvisor`、`CGO_ENABLED=0` 静态编译。
-- 下载 `.gz` 与 `SHA256SUMS`，在同一目录执行 `sha256sum -c SHA256SUMS`。
-- 使用 `gzip -d` 解压，将文件重命名为 `mihomo`，运行 `chmod +x mihomo`。
-- 用 `./mihomo -v` 查看版本，再使用 `./mihomo -f config.yaml` 启动。
+| 平台 | 附件格式 | 用法 |
+| --- | --- | --- |
+| Linux amd64 / Ubuntu x86_64 | `mihomo-cn2-linux-amd64-<版本>.gz` | 静态内核，解压后重命名为 `mihomo` 并添加执行权限 |
+| Windows amd64 / x86_64 | `mihomo-cn2-windows-amd64-<版本>.zip` | 解压得到 `mihomo.exe` |
+| Android arm64 | `mihomo-cn2-android-arm64-<版本>.gz` | 解压后是 CLI 内核，需相容的运行环境或支持替换核心的客户端；不是 APK |
+
+- 三个平台均使用 `with_gvisor`、`CGO_ENABLED=0`；Linux / Windows amd64 使用 `GOAMD64=v1`。
+- 下载平台附件和 `SHA256SUMS`；Linux 可执行 `sha256sum --ignore-missing -c SHA256SUMS`，Windows 可用 PowerShell `Get-FileHash` 对照哈希。
+- Linux / Android 解压后运行 `chmod +x mihomo`，用 `./mihomo -v` 查看版本，再使用 `./mihomo -f config.yaml` 启动。
+- Windows 使用 `mihomo.exe -v` 和 `mihomo.exe -f config.yaml`。
 - 本地代理可监听 `127.0.0.1:7890`，HTTP / SOCKS5 共用端口；全局模式通过只包含目标节点的 `GLOBAL` 组选择出口。
 - 私有仓库下载需要登录有权限的 GitHub 账号。
 
 ## 验证和边界
 
 发布前通过完整 Go 测试、四类专用协议的 gVisor 回归、UU SNI / VK S6
-竞态检测、Linux 可执行文件启动及 QyProxy / UU SNI / VK S6 示例配置校验。
+竞态检测、三个平台的编译与文件信息检查、Linux 可执行文件启动及
+QyProxy / UU SNI / VK S6 示例配置校验。三个平台全部构建成功后统一发布。
 
 QyProxy 已有 Linux / Windows 的 TCP/UDP 测试记录；VK S6 已有 Windows
 真实节点下载记录。UU SNI 的 Go 实现目前通过模拟节点和本地 HTTPS 测试，
