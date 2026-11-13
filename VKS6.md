@@ -7,6 +7,16 @@
 复现的 IPv4 TCP 连接形式。mihomo 内核直接连接 VK 节点并转发 TCP，
 不需要 Python SOCKS 中转或 APK 原生库。它不实现 VK 游戏 UDP 加速。
 
+## 发布内核
+
+从 `v0.1.2` 起，[GitHub Releases](https://github.com/ztyawc/mihomo-cn2/releases)
+提供包含 VK S6 的 Ubuntu / Linux x86_64 静态内核；`v0.1.1` 尚不包含此协议。
+下载、SHA256 校验与运行步骤见 [README.md](README.md)。发布前会执行
+VK S6 的普通测试、gVisor 回归、竞态检测及示例配置校验。
+
+Windows amd64 和 Android arm64 CLI 可从同一源码构建，常规 CI 做交叉编译
+检查。上述 Linux 发布附件不能直接作为 Windows 可执行文件或 Android APK 使用。
+
 ## 配置
 
 把以下节点放入 `proxies:`，填写自己当前会话的用户名和密码：
