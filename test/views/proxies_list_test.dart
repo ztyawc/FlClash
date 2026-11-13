@@ -5,9 +5,11 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/proxies/card.dart';
 import 'package:fl_clash/views/proxies/list.dart';
 import 'package:fl_clash/views/views.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:prism_ui/context.dart';
+import 'package:prism_ui/scaffold.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
@@ -63,12 +65,15 @@ void main() {
     await tester.pump();
 
     final barBottom = tester.getRect(find.byType(AppBar)).bottom;
-    expect(tester.getRect(find.byType(ListHeader)).top, barBottom + 8);
+    final contentTop = tester
+        .element(find.byType(ListHeader))
+        .contentTopPadding;
+    expect(tester.getRect(find.byType(ListHeader)).top, contentTop);
 
     await tester.drag(find.byType(ProxyCard).first, const Offset(0, -300));
     await tester.pump();
 
-    expect(tester.getRect(find.byType(ListHeader)).top, barBottom + 8);
+    expect(tester.getRect(find.byType(ListHeader)).top, contentTop);
     expect(
       find
           .byType(ProxyCard)
@@ -143,12 +148,11 @@ void main() {
     position.jumpTo(position.maxScrollExtent - 1000);
     await tester.pump();
 
-    final barBottom = tester.getRect(find.byType(AppBar)).bottom;
     final far = find.ancestor(
       of: find.text('Far'),
       matching: find.byType(ListHeader),
     );
-    expect(tester.getRect(far).top, barBottom + 8);
+    expect(tester.getRect(far).top, tester.element(far).contentTopPadding);
     expect(find.text('G0', skipOffstage: false), findsNothing);
     expect(tester.takeException(), isNull);
   });

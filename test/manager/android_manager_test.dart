@@ -8,7 +8,7 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -96,9 +96,8 @@ void main() {
     await pumpAndroidManager(tester);
     expect(store.getString('sharedState'), isNull);
 
-    container.read(appSettingProvider.notifier).value = const AppSettingProps(
-      testUrl: 'http://shared.test',
-    );
+    container.read(patchClashConfigProvider.notifier).value =
+        const PatchClashConfig(testUrl: 'http://shared.test');
     await tester.pump();
     await tester.pump(const Duration(seconds: 2));
     await tester.pumpAndSettle();

@@ -1,12 +1,11 @@
 import 'dart:convert';
 
-import 'package:fl_clash/common/migration.dart';
 import 'package:fl_clash/common/constant.dart';
+import 'package:fl_clash/common/migration.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
-import 'package:fl_clash/ui/color.dart';
-import 'package:material_ui/material_ui.dart' show ThemeMode;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 void main() {
   group('Migration', () {
@@ -256,6 +255,55 @@ void main() {
         expect(await upgrade('standard', 1), LiquidGlassMode.ultra);
         expect(await upgrade('none', 1), LiquidGlassMode.none);
         expect(await upgrade('standard', 2), LiquidGlassMode.standard);
+      });
+
+      test('moves presets picked before to the current system colors, '
+          'once', () async {
+        Future<ThemeProps> upgrade(int from) async {
+          final configMap = _createConfigMap();
+          (configMap['themeProps']! as Map<String, Object?>)
+            ..['primaryColor'] = 0xFFFF9500
+            ..['primaryColors'] = [
+              0xFF007AFF,
+              0xFFAF52DE,
+              0xFFCB30E0,
+              0xFFFF9500,
+              0xFF123456,
+            ];
+          final store = _FakeMigrationStore(
+            configMap: configMap,
+            version: Migration.currentVersion,
+            upgradeVersion: from,
+          );
+          return (await Migration(store: store).run()).themeProps;
+        }
+
+        final moved = await upgrade(2);
+        expect(moved.primaryColor, 0xFFFF8D28);
+        expect(moved.primaryColors, [
+          0xFF007AFF,
+          0xFFCB30E0,
+          0xFFFF8D28,
+          0xFF123456,
+        ]);
+        expect((await upgrade(3)).primaryColor, 0xFFFF9500);
+      });
+
+      test('turns off the sidebar blur releases stored unseen, once', () async {
+        Future<bool> upgrade(int from) async {
+          final configMap = _createConfigMap();
+          (configMap['themeProps']! as Map<String, Object?>)['sidebarBlur'] =
+              true;
+          final store = _FakeMigrationStore(
+            configMap: configMap,
+            version: Migration.currentVersion,
+            upgradeVersion: from,
+          );
+          return (await Migration(store: store).run()).themeProps.sidebarBlur;
+        }
+
+        expect(await upgrade(3), isFalse);
+        expect(await upgrade(4), isTrue);
       });
 
       test('a new install only records it', () async {

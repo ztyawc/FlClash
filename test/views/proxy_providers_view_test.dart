@@ -13,7 +13,7 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/proxies/providers.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -23,6 +23,7 @@ import '../helpers/context_menu.dart';
 import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 import '../plugins/code_forge/support.dart' show initEditorNative;
+import '../helpers/host_scaffold.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
@@ -31,7 +32,7 @@ class _ProvidersSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Scaffold(
+    return HostScaffold(
       body: CustomScrollView(
         slivers: [
           ExternalProvidersSliver(providers: ref.watch(providersProvider)),
@@ -113,18 +114,11 @@ void main() {
     return container;
   }
 
-  Future<void> pump(
-    WidgetTester tester,
-    ProviderContainer container, {
-    bool withStatusManager = false,
-  }) async {
+  Future<void> pump(WidgetTester tester, ProviderContainer container) async {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: TestApp(
-          withStatusManager: withStatusManager,
-          child: const _ProvidersSection(),
-        ),
+        child: const TestApp(child: _ProvidersSection()),
       ),
     );
     await tester.pumpAndSettle();
@@ -189,15 +183,20 @@ void main() {
     fail('$name never offered the edit entry');
   }
 
+  String? shownText(WidgetTester tester) =>
+      tester.state<EditorViewState>(find.byType(EditorView)).controller?.text;
+
+  Finder editorShowing(bool Function(String text) matches) =>
+      find.byElementPredicate((element) {
+        final state = element is StatefulElement ? element.state : null;
+        final text = state is EditorViewState ? state.controller?.text : null;
+        return text != null && matches(text);
+      });
+
   Future<EditorPage> openEditor(WidgetTester tester, String name) async {
     await openMenuWithEdit(tester, name);
     await tester.tap(find.text(currentAppLocalizations.edit));
-    await pumpUntil(
-      tester,
-      find.byWidgetPredicate(
-        (widget) => widget is EditorView && widget.content?.isNotEmpty == true,
-      ),
-    );
+    await pumpUntil(tester, editorShowing((text) => text.isNotEmpty));
     return tester.widget<EditorPage>(find.byType(EditorPage));
   }
 
@@ -225,7 +224,7 @@ void main() {
     final container = containerFor(tester, providers);
     await pump(tester, container);
 
-    expect(find.byType(SliverList), findsOneWidget);
+    expect(find.byType(SliverPrismList), findsOneWidget);
     expect(find.text('proxy-0'), findsOneWidget);
     expect(find.text('proxy-49'), findsNothing);
   });
@@ -299,6 +298,73 @@ void main() {
     expect(tester.takeException(), null);
   });
 
+  testWidgets('a provider with a traffic quota shows its usage below the name '
+      'and moves the count beside it', (tester) async {
+    final container = containerFor(tester, [
+      _provider(
+        'metered',
+        count: 128,
+        subscriptionInfo: const SubscriptionInfo(
+          upload: 1024,
+          download: 2048,
+          total: 1073741824,
+        ),
+      ),
+      _provider('unmetered', subscriptionInfo: const SubscriptionInfo()),
+    ]);
+    await pump(tester, container);
+
+    final l10n = currentAppLocalizations;
+    Finder rowOf(String name) => find.ancestor(
+      of: find.text(name),
+      matching: find.byType(DecorationListItem),
+    );
+    final metered = rowOf('metered');
+    final usage = find.descendant(
+      of: metered,
+      matching: find.text('3KB / 1GB'),
+    );
+    final meter = find.descendant(
+      of: metered,
+      matching: find.byType(LinearProgressIndicator),
+    );
+    expect(
+      find.descendant(
+        of: metered,
+        matching: find.widgetWithText(TonalChip, '128'),
+      ),
+      findsOne,
+    );
+    expect(find.text(l10n.proxiesCount(128, '128')), findsNothing);
+    expect(
+      tester.getTopLeft(usage).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(find.text('metered')).dy),
+    );
+    expect(
+      tester.getTopLeft(meter).dy,
+      greaterThanOrEqualTo(tester.getBottomLeft(usage).dy),
+    );
+    expect(
+      tester.widget<LinearProgressIndicator>(meter).value,
+      3072 / 1073741824,
+    );
+
+    final unmetered = rowOf('unmetered');
+    expect(
+      find.descendant(
+        of: unmetered,
+        matching: find.text(l10n.proxiesCount(3, '3')),
+      ),
+      findsOne,
+    );
+    expect(
+      find.descendant(of: unmetered, matching: find.byType(TonalChip)),
+      findsNothing,
+    );
+    expect(find.byType(LinearProgressIndicator), findsOne);
+    expect(tester.takeException(), null);
+  });
+
   testWidgets('offers sync only for HTTP-backed providers', (tester) async {
     final container = containerFor(tester, [
       _provider('http-one'),
@@ -334,8 +400,6 @@ void main() {
     await pump(tester, container);
 
     final l10n = currentAppLocalizations;
-    expect(find.byType(SubscriptionInfoView), findsNothing);
-
     await openMenu(tester, 'with-subscription');
     expect(find.text(l10n.subscriptionInfo), findsOne);
     await closeMenu(tester);
@@ -373,7 +437,7 @@ void main() {
     final container = containerFor(tester, [provider]);
     await pump(tester, container);
 
-    expect(find.byType(CommonCircleLoading), findsNothing);
+    expect(find.byType(ActivityIndicator), findsNothing);
 
     final updating = container.read(updatingKeysProvider.notifier);
     updating.start(provider.updatingKey);
@@ -381,8 +445,8 @@ void main() {
     await rightClick(tester, find.text('http-one'));
     await settleTrailing(tester);
 
-    expect(find.byType(CommonCircleLoading), findsOne);
-    expect(find.byType(CommonPopupMenu), findsNothing);
+    expect(find.byType(ActivityIndicator), findsOne);
+    expect(find.byType(PopupMenu), findsNothing);
   });
 
   testWidgets('keeps loading state for virtualized offscreen rows', (
@@ -412,7 +476,7 @@ void main() {
     expect(
       find.descendant(
         of: providerRow,
-        matching: find.byType(CommonCircleLoading),
+        matching: find.byType(ActivityIndicator),
       ),
       findsOneWidget,
     );
@@ -430,9 +494,7 @@ void main() {
     when(
       () => core.updateExternalProvider('proxy-a'),
     ).thenAnswer((_) => completer.future);
-    when(
-      () => core.updateExternalProvider('rule-a'),
-    ).thenAnswer((_) async => '');
+    when(() => core.updateExternalProvider('rule-a')).thenAnswer((_) async {});
     when(() => core.getExternalProvider(any())).thenAnswer(
       (invocation) async =>
           _provider(invocation.positionalArguments.first as String),
@@ -452,10 +514,7 @@ void main() {
     );
     for (final pending in [header, pendingRow]) {
       expect(
-        find.descendant(
-          of: pending,
-          matching: find.byType(CommonCircleLoading),
-        ),
+        find.descendant(of: pending, matching: find.byType(ActivityIndicator)),
         findsOne,
       );
     }
@@ -466,7 +525,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 700));
 
-    expect(find.byType(CommonCircleLoading), findsNothing);
+    expect(find.byType(ActivityIndicator), findsNothing);
     expect(find.byGlyph(AppGlyphs.sync), findsOne);
     verify(() => core.updateExternalProvider('proxy-a')).called(1);
     verify(() => core.updateExternalProvider('rule-a')).called(1);
@@ -485,7 +544,7 @@ void main() {
     when(
       () => core.getProxies(),
     ).thenAnswer((_) async => const ProxiesData(proxies: {}, all: []));
-    await pump(tester, container, withStatusManager: true);
+    await pump(tester, container);
 
     await tester.tap(find.byGlyph(AppGlyphs.sync));
     await tester.pumpAndSettle();
@@ -543,7 +602,7 @@ void main() {
         providerName: 'editable',
         data: any(named: 'data'),
       ),
-    ).thenAnswer((_) async => '');
+    ).thenAnswer((_) async {});
     when(
       () => core.getExternalProvider('editable'),
     ).thenAnswer((_) async => provider);
@@ -555,15 +614,12 @@ void main() {
     await pump(tester, container);
 
     final editor = await openEditor(tester, 'editable');
-    expect(
-      tester.widget<EditorView>(find.byType(EditorView)).content,
-      'payload:\n  - old\n',
-    );
+    expect(shownText(tester), 'payload:\n  - old\n');
 
     editor.onSave!(
       tester.element(find.byType(EditorPage)),
       'editable',
-      'payload:\n  - new\n',
+      const EditorContent.text('payload:\n  - new\n'),
     );
     await pumpUntil(tester, find.byType(EditorPage), found: false);
 
@@ -589,9 +645,7 @@ void main() {
     await pump(tester, container);
     await openMenuWithEdit(tester, 'tapped');
     await closeMenu(tester);
-    final loaded = find.byWidgetPredicate(
-      (widget) => widget is EditorView && widget.content == 'payload:\n',
-    );
+    final loaded = editorShowing((text) => text == 'payload:\n');
 
     await tester.tap(find.text('without-file'));
     await tester.pumpAndSettle();
@@ -621,7 +675,12 @@ void main() {
         providerName: 'rejected',
         data: any(named: 'data'),
       ),
-    ).thenAnswer((_) async => 'invalid payload');
+    ).thenAnswer(
+      (_) async => throw const CoreMethodException(
+        code: 'core_error',
+        message: 'invalid payload',
+      ),
+    );
 
     final container = containerFor(tester, [provider]);
     await pump(tester, container);
@@ -630,7 +689,7 @@ void main() {
     editor.onSave!(
       tester.element(find.byType(EditorPage)),
       'rejected',
-      'payload: broken\n',
+      const EditorContent.text('payload: broken\n'),
     );
     await pumpUntil(tester, find.text('invalid payload'));
 
@@ -652,9 +711,11 @@ void main() {
 
     final editor = await openEditor(tester, 'leaving');
     final context = tester.element(find.byType(EditorPage));
-    expect(await editor.onPop!(context, 'leaving', 'payload:\n'), isTrue);
-
-    final popped = editor.onPop!(context, 'leaving', 'payload: changed\n');
+    final popped = editor.onPop!(
+      context,
+      'leaving',
+      const EditorContent.text('payload: changed\n'),
+    );
     await pumpTransitions(tester);
     expect(find.text(currentAppLocalizations.saveChanges), findsOneWidget);
     await tester.tap(find.text(currentAppLocalizations.cancel));
@@ -710,18 +771,18 @@ void main() {
     final container = containerFor(tester, [provider]);
     await pump(tester, container);
 
-    expect(find.byType(CommonCircleLoading), findsNothing);
+    expect(find.byType(ActivityIndicator), findsNothing);
 
     await openMenu(tester, 'http-one');
     await tester.tap(find.text(currentAppLocalizations.sync));
     await settleTrailing(tester);
 
-    expect(find.byType(CommonCircleLoading), findsOne);
+    expect(find.byType(ActivityIndicator), findsOne);
 
     completer.complete('');
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 700));
 
-    expect(find.byType(CommonCircleLoading), findsNothing);
+    expect(find.byType(ActivityIndicator), findsNothing);
   });
 }

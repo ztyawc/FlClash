@@ -6,10 +6,8 @@ import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import 'quick_edit.dart';
 
 class CustomRulesView extends ConsumerStatefulWidget {
   final int profileId;
@@ -64,15 +62,15 @@ class _CustomRulesViewState extends ConsumerState<CustomRulesView> {
     });
   }
 
-  List<CommonPopupMenuItem> _menuItems(Rule rule) {
+  List<PopupMenuItem> _menuItems(Rule rule) {
     final appLocalizations = context.appLocalizations;
     return [
-      CommonPopupMenuItem(
+      PopupMenuItem(
         glyph: AppGlyphs.copy,
         label: appLocalizations.copy,
         onPressed: () => _handleDuplicate({rule.id}),
       ),
-      CommonPopupMenuItem(
+      PopupMenuItem(
         glyph: AppGlyphs.delete,
         label: appLocalizations.delete,
         danger: true,
@@ -89,7 +87,7 @@ class _CustomRulesViewState extends ConsumerState<CustomRulesView> {
       return Future.value();
     }
     final notifier = ref.read(provider.notifier);
-    return showCustomQuickEdit(
+    return showQuickEdit(
       context,
       title: appLocalizations.rule,
       content: encodeRuleList(previous),
@@ -170,7 +168,7 @@ class _CustomRulesViewState extends ConsumerState<CustomRulesView> {
       onReorder: _handleReorder,
       onAdd: () => _handleAddOrUpdate(),
       addMenuItems: [
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.rulePresets,
           label: appLocalizations.quickActions,
           onPressed: _handleQuickActions,
@@ -534,13 +532,14 @@ class _AddOrEditRuleViewState extends ConsumerState<_AddOrEditRuleView> {
     final appLocalizations = context.appLocalizations;
     final profileId = ProfileIdProvider.of(context)!.profileId;
     final rule = ref.watch(ruleProvider);
-    return CommonScaffold(
+    return Scaffold(
       confirmationAction: customSaveAction(context, onPressed: _handleSave),
       body: ListView(
         shrinkWrap: true,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 16,
-        ).copyWith(bottom: 20, top: context.contentTopPadding),
+        padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+          bottom: 20 + context.bottomInset,
+          top: context.sectionsTopPadding,
+        ),
         children: [
           generateSection(
             title: appLocalizations.basicInfo,

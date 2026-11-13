@@ -8,12 +8,13 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_ui/material_ui.dart';
 
 import 'layout.dart';
 import 'style.dart';
 import 'widget_registry.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 const _rowHeight = 64.0;
 const _rowGap = 8.0;
@@ -164,7 +165,6 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
     ];
     final scale = DashboardDensityScope.scaleOf(context);
     final sway = context.disableAnimations ? null : _sway;
-    final dragsAtOnce = desktopPlatforms.contains(widget.platform);
     final appLocalizations = context.appLocalizations;
 
     final revealPadding = EdgeInsets.only(
@@ -198,7 +198,6 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
                       item: card,
                       cardKey: widget.cardKeyOf(card),
                       index: index,
-                      dragsAtOnce: dragsAtOnce,
                       sway: sway,
                       onRemove: card.removable ? () => _remove(card) : null,
                     ),
@@ -408,7 +407,6 @@ class _EditableCard extends StatelessWidget {
     required this.item,
     required this.cardKey,
     required this.index,
-    required this.dragsAtOnce,
     required this.sway,
     required this.onRemove,
   });
@@ -416,9 +414,6 @@ class _EditableCard extends StatelessWidget {
   final DashboardWidget item;
   final GlobalKey cardKey;
   final int index;
-
-  /// A mouse drags a card at once; a finger holds it first, so it scrolls.
-  final bool dragsAtOnce;
   final Animation<double>? sway;
   final VoidCallback? onRemove;
 
@@ -432,10 +427,7 @@ class _EditableCard extends StatelessWidget {
     final content = Stack(
       fit: StackFit.passthrough,
       children: [
-        if (dragsAtOnce)
-          ReorderableDragStartListener(index: index, child: card)
-        else
-          ReorderableDelayedDragStartListener(index: index, child: card),
+        ReorderDragStartListener(index: index, child: card),
         if (onRemove != null)
           PositionedDirectional(
             top: 0,
@@ -514,7 +506,7 @@ class _LiftedCard extends StatelessWidget {
           ),
         );
       },
-      child: Material(type: MaterialType.transparency, child: child),
+      child: Surface.transparent(child: child),
     );
   }
 }
@@ -631,12 +623,12 @@ class _RoundButton extends StatelessWidget {
       child: IconButton(
         tooltip: tooltip,
         padding: EdgeInsets.zero,
-        style: IconButton.styleFrom(
+        style: ButtonStyle.from(
           backgroundColor: background,
           foregroundColor: foreground,
           minimumSize: const Size.square(28),
           fixedSize: const Size.square(28),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          tapTargetSize: TapTargetSize.shrinkWrap,
         ),
         onPressed: onPressed,
         icon: GlyphIcon(glyph, size: 16, color: foreground),

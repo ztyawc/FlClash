@@ -8,12 +8,13 @@ import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/proxy_groups.dart';
 import 'package:fl_clash/views/proxies/proxies.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 
 import '../../helpers/test_app.dart';
 import '../../helpers/test_profiles.dart';
+import '../../helpers/host_scaffold.dart';
 
 const _testUrl = 'https://test.example/generate_204';
 
@@ -73,7 +74,7 @@ void main() {
       UncontrolledProviderScope(
         container: container,
         child: TestApp(
-          child: Scaffold(
+          child: HostScaffold(
             body: Align(
               alignment: Alignment.topLeft,
               child: SizedBox(
@@ -234,7 +235,8 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a timed out selection is counted in the header', (tester) async {
+  testWidgets('a timed out selection is counted in the header, not on its '
+      'tile', (tester) async {
     container.read(groupsProvider.notifier).value = [
       _group('Auto', ['HK-01'], now: 'HK-01'),
       _group('Media', ['JP-01'], now: 'JP-01'),
@@ -244,7 +246,7 @@ void main() {
     };
     await pumpCard(tester);
 
-    expect(find.text('48 ms'), findsOneWidget);
+    expect(find.text('48 ms'), findsNothing);
     expect(find.text('1 timed out'), findsOneWidget);
   });
 
@@ -310,12 +312,12 @@ void main() {
   });
 
   for (final (type, desktop, searching, mobile) in [
-    (ProxiesType.list, ['Close', 'Search'], ['Clear search'], ['Close']),
+    (ProxiesType.list, ['Close', 'Search'], ['Cancel'], ['Close']),
     (
       ProxiesType.tab,
       ['Search', 'Delay test', 'Close'],
-      ['Clear search', 'Delay test'],
-      ['Delay test', 'Close'],
+      ['Delay test', 'Cancel'],
+      ['Close', 'Delay test'],
     ),
   ]) {
     testWidgets('the sheet bar of the ${type.name} layout keeps search and '
@@ -328,7 +330,7 @@ void main() {
       ];
       Iterable<String?> barButtons() => tester
           .widgetList<AppBarActionButton>(
-            inSheet(find.byType(AppBarActionButton)),
+            inSheet(find.byType(AppBarActionButton).hitTestable()),
           )
           .map((button) => button.data.tooltip);
 
@@ -339,7 +341,7 @@ void main() {
       await tester.tap(inSheet(find.byTooltip('Search')));
       await tester.pumpAndSettle();
       expect(barButtons(), unorderedEquals(searching));
-      await tester.tap(inSheet(find.byTooltip('Back')));
+      await tester.tap(inSheet(find.byTooltip('Cancel')));
       await tester.pumpAndSettle();
 
       Navigator.of(tester.element(find.byType(ProxiesView))).pop();

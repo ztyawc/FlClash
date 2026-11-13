@@ -8,7 +8,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 
 import 'edit.dart';
 import 'layout.dart';
@@ -17,9 +17,9 @@ import 'widget_registry.dart';
 import 'widgets/core_status_button.dart';
 import 'widgets/widgets.dart';
 
-// Narrower columns leave the service grid's cells too tight for a status, so
-// the grid takes the memory card's column instead.
-const _memoryColumnMin = 290.0;
+// Narrower columns leave a pair of service cells too tight for a status, so
+// the grid stacks them in one.
+const _servicePairColumnMin = 290.0;
 
 const _maxColumnWidth = 440.0;
 
@@ -58,13 +58,15 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     final editing = _editing;
     final gap = cardSpacingOf(context, ref.watch(viewModeProvider));
     final appLocalizations = context.appLocalizations;
-    return CommonScaffold(
+    return Scaffold(
       backgroundColor: DashboardColors.of(context).page,
       title: editing
           ? appLocalizations.editDashboard
           : appLocalizations.dashboard,
-      backAction: editing ? () => _setEditing(false) : null,
-      actions: [if (!editing && coreLib == null) const CoreStatusButton()],
+      actions: [
+        if (!editable) const UpdateStatusButton(),
+        if (!editing && coreLib == null) const CoreStatusButton(),
+      ],
       confirmationAction: editing
           ? IconButtonData(
               glyph: AppGlyphs.check,
@@ -129,7 +131,7 @@ class _DesktopDashboard extends StatelessWidget {
     final scale = DashboardDensityScope.scaleOf(context);
     final base = EdgeInsetsDirectional.fromSTEB(
       16,
-      MediaQuery.paddingOf(context).top,
+      context.contentTopPadding,
       24,
       24 + MediaQuery.paddingOf(context).bottom,
     );
@@ -228,11 +230,13 @@ class _DesktopDashboard extends StatelessWidget {
             row([
               (1, const IntranetIpCard()),
               (1, const ProfilesCard()),
-              if (column >= _memoryColumnMin * scale) ...[
-                (1, const ServiceStatusCard()),
-                (1, const MemoryInfo()),
-              ] else
-                (2, const ServiceStatusCard()),
+              (
+                1,
+                ServiceStatusCard(
+                  columns: column >= _servicePairColumnMin * scale ? 2 : 1,
+                ),
+              ),
+              (1, const MemoryInfo()),
             ]),
           ),
         ];
@@ -307,8 +311,8 @@ class _MobileDashboard extends ConsumerWidget {
     final saved = ref.watch(
       dashboardStateProvider.select((state) => state.dashboardWidgets),
     );
-    final top = MediaQuery.paddingOf(context).top + 4;
-    final bottom = 16 + BottomInsetScope.of(context);
+    final top = context.contentTopPadding;
+    final bottom = 16 + context.bottomInset;
     return CustomScrollView(
       // A viewport per card lays them all out and holds the scroll end still.
       scrollCacheExtent: editing
@@ -338,13 +342,19 @@ class _MobileDashboard extends ConsumerWidget {
               // ones it has; cards this uneven move the scroll end as it goes.
               sliver: SliverToBoxAdapter(
                 child: Column(
-                  spacing: gap,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final widget in widgets)
-                      RepaintBoundary(
-                        key: cardKeyOf(widget),
-                        child: widget.card,
-                      ),
+                    UpdateStatusSlot(gap: gap),
+                    Column(
+                      spacing: gap,
+                      children: [
+                        for (final widget in widgets)
+                          RepaintBoundary(
+                            key: cardKeyOf(widget),
+                            child: widget.card,
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               ),

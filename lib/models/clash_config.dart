@@ -16,6 +16,7 @@ const defaultDns = Dns();
 const defaultNtp = Ntp();
 const defaultSniffer = Sniffer();
 const defaultProfileTun = ProfileTun();
+const defaultMitm = Mitm();
 
 /// What a profile that brings no DNS section of its own is given, so the core
 /// always resolves. The user's own override set starts empty.
@@ -227,6 +228,7 @@ abstract class Proxy with _$Proxy {
     required String name,
     required String type,
     String? now,
+    @JsonKey(name: 'provider-name') String? providerName,
   }) = _Proxy;
 
   factory Proxy.fromJson(Map<String, Object?> json) => _$ProxyFromJson(json);
@@ -238,6 +240,7 @@ extension ProxyExt on Proxy {
 
 /// The `type` values `adapter.ParseProxy` accepts, in its own order.
 const customProxyTypes = [
+  'vk-s6',
   'uusni',
   'qyproxy',
   'ss',
@@ -397,6 +400,7 @@ extension CustomProxyExt on CustomProxy {
   List<String> get searchFields => [name, type, ?server];
 
   Set<String> get requiredKeys => switch (type) {
+    'vk-s6' => const {'server', 'port', 'username', 'password'},
     'uusni' => const {'server', 'port', 'obfs-key', 'sni-crypt'},
     'qyproxy' => const {
       'server',
@@ -433,6 +437,7 @@ extension CustomProxyExt on CustomProxy {
 
   /// The rows the form always shows: the credentials and [requiredKeys].
   List<ProxyField> get fields => switch (type) {
+    'vk-s6' => const [ProxyField.username, ProxyField.password],
     'uusni' => const [ProxyField.obfsKey, ProxyField.sniCrypt],
     'qyproxy' => const [
       ProxyField.username,
@@ -484,6 +489,22 @@ extension CustomProxyExt on CustomProxy {
         field,
   ];
 
+  /// What tells one account on a server from another, in a type that has no
+  /// [credentials] the key it signs in with.
+  List<ProxyField> get accountKeys => [
+    for (final field in fields)
+      if (const {
+        ProxyField.username,
+        ProxyField.password,
+        ProxyField.uuid,
+        ProxyField.psk,
+        ProxyField.key,
+        ProxyField.privateKey,
+        ProxyField.authStr,
+      }.contains(field))
+        field,
+  ];
+
   /// The keys the form adds one at a time, each left to the core's default
   /// until then.
   List<ProxyField> get options {
@@ -523,9 +544,24 @@ extension CustomProxyExt on CustomProxy {
       ProxyField.protocol || ProxyField.obfsSecret => type == 'hysteria',
       ProxyField.network => choicesOf(field).isNotEmpty,
       ProxyField.flow => type == 'vless',
-      ProxyField.wsPath || ProxyField.wsHost => _usesNetwork('ws'),
+      ProxyField.wsPath ||
+      ProxyField.wsHost ||
+      ProxyField.wsHeaders ||
+      ProxyField.wsMaxEarlyData ||
+      ProxyField.wsEarlyDataHeaderName ||
+      ProxyField.wsHttpUpgrade => _usesNetwork('ws'),
+      ProxyField.wsHttpUpgradeFastOpen =>
+        _usesNetwork('ws') && valueOf(ProxyField.wsHttpUpgrade) == true,
+      ProxyField.httpMethod ||
+      ProxyField.httpPath ||
+      ProxyField.httpHost ||
+      ProxyField.httpHeaders => _usesNetwork('http'),
+      ProxyField.h2Host || ProxyField.h2Path => _usesNetwork('h2'),
       ProxyField.grpcServiceName => _usesNetwork('grpc'),
       ProxyField.xhttpPath || ProxyField.xhttpHost => _usesNetwork('xhttp'),
+      ProxyField.mkcpSeed || ProxyField.mkcpHeader => _usesNetwork('mkcp'),
+      ProxyField.mekyaUrl => _usesNetwork('mekya'),
+      ProxyField.headers => type == 'http',
       ProxyField.tls => const {
         'socks5',
         'http',
@@ -587,8 +623,20 @@ extension CustomProxyExt on CustomProxy {
         'trojan',
       }.contains(type),
       ProxyField.plugin || ProxyField.udpOverTcp => type == 'ss',
-      ProxyField.pluginMode => type == 'ss' && _pluginReads('mode'),
-      ProxyField.pluginHost => type == 'ss' && _pluginReads('host'),
+      ProxyField.pluginMode ||
+      ProxyField.pluginHost ||
+      ProxyField.pluginPath ||
+      ProxyField.pluginUsername ||
+      ProxyField.pluginPassword ||
+      ProxyField.pluginVersion ||
+      ProxyField.pluginVersionHint ||
+      ProxyField.pluginRestlsScript ||
+      ProxyField.pluginKey ||
+      ProxyField.pluginCrypt ||
+      ProxyField.pluginTls ||
+      ProxyField.pluginMux ||
+      ProxyField.pluginSkipCertVerify =>
+        type == 'ss' && _pluginReads(field.path.last),
       ProxyField.protocolParam || ProxyField.obfsParam => type == 'ssr',
       ProxyField.obfsMode ||
       ProxyField.obfsHost ||
@@ -632,9 +680,30 @@ extension CustomProxyExt on CustomProxy {
   }
 
   bool _pluginReads(String key) => switch (valueOf(ProxyField.plugin)) {
-    'obfs' || 'v2ray-plugin' || 'gost-plugin' => true,
-    'kcptun' => key == 'mode',
-    'shadow-tls' || 'restls' || 'jls' => key == 'host',
+    'obfs' => key == 'mode' || key == 'host',
+    'v2ray-plugin' || 'gost-plugin' => const {
+      'mode',
+      'host',
+      'path',
+      'tls',
+      'mux',
+      'skip-cert-verify',
+    }.contains(key),
+    'kcptun' => const {'mode', 'key', 'crypt'}.contains(key),
+    'shadow-tls' => const {
+      'host',
+      'password',
+      'version',
+      'skip-cert-verify',
+    }.contains(key),
+    'restls' => const {
+      'host',
+      'password',
+      'version-hint',
+      'restls-script',
+      'skip-cert-verify',
+    }.contains(key),
+    'jls' => const {'host', 'username', 'password'}.contains(key),
     _ => false,
   };
 
@@ -714,6 +783,31 @@ extension CustomProxyExt on CustomProxy {
       'jls',
       'kcptun',
     ],
+    ProxyField.pluginVersionHint => const ['tls13', 'tls12'],
+    ProxyField.pluginCrypt => const [
+      'aes',
+      'aes-128',
+      'aes-192',
+      'aes-128-gcm',
+      'salsa20',
+      'blowfish',
+      'twofish',
+      'cast5',
+      '3des',
+      'tea',
+      'xtea',
+      'xor',
+      'none',
+      'null',
+    ],
+    ProxyField.mkcpHeader => const [
+      'none',
+      'srtp',
+      'utp',
+      'wechat-video',
+      'dtls',
+      'wireguard',
+    ],
     ProxyField.obfsMode => const ['http', 'tls', 'shadow-tls', 'restls', 'jls'],
     ProxyField.congestionController => const [
       'cubic',
@@ -729,9 +823,11 @@ extension CustomProxyExt on CustomProxy {
     _ => const [],
   };
 
-  Object? valueOf(ProxyField field) {
+  Object? valueOf(ProxyField field) => _valueAt(field.path);
+
+  Object? _valueAt(List<String> path) {
     Object? value = definition;
-    for (final key in field.path) {
+    for (final key in path) {
       if (value is! Map) {
         return null;
       }
@@ -792,15 +888,67 @@ extension CustomProxyExt on CustomProxy {
     return next;
   }
 
-  List<String> stringsOf(String key) =>
-      switch (definition[_keyIn(definition, key)]) {
-        final List items => [for (final item in items) item.toString()],
-        final String item when item.isNotEmpty => [item],
-        _ => const [],
-      };
+  List<String> stringsOf(List<String> path) => switch (_valueAt(path)) {
+    final List items => [for (final item in items) item.toString()],
+    final String item when item.isNotEmpty => [item],
+    _ => const [],
+  };
 
-  CustomProxy withValue(String key, Object? value) =>
-      copyWith(definition: _withPath(definition, [key], value));
+  /// The entries of [field]'s map less the keys other fields edit, as
+  /// WebSocket Host, with a list of values shown as one line.
+  Map<String, String> stringMapOf(ProxyField field) {
+    final owned = {for (final key in ownedKeysOf(field)) key.toLowerCase()};
+    return switch (valueOf(field)) {
+      final Map map => {
+        for (final MapEntry(:key, :value) in map.entries)
+          if (value != null && !owned.contains(key.toString().toLowerCase()))
+            key.toString(): switch (value) {
+              final List items => items.join(', '),
+              _ => value.toString(),
+            },
+      },
+      _ => const {},
+    };
+  }
+
+  /// Keeps the keys other fields edit, and each value [entries] leaves as
+  /// [stringMapOf] showed it, so a list of values survives editing the rest.
+  CustomProxy withEntries(ProxyField field, Map<String, String> entries) {
+    final previous = switch (valueOf(field)) {
+      final Map map => map,
+      _ => const {},
+    };
+    final shown = stringMapOf(field);
+    final owned = {for (final key in ownedKeysOf(field)) key.toLowerCase()};
+    // The core reads each http-opts header as values to pick from.
+    final listsValues = field == ProxyField.httpHeaders;
+    return withField(field, {
+      for (final MapEntry(:key, :value) in previous.entries)
+        if (owned.contains(key.toString().toLowerCase())) key.toString(): value,
+      for (final MapEntry(:key, :value) in entries.entries)
+        key: shown[key] == value
+            ? previous[key]
+            : listsValues
+            ? [value]
+            : value,
+    });
+  }
+
+  /// The keys of [field]'s map that fields of their own edit.
+  Set<String> ownedKeysOf(ProxyField field) {
+    final path = field.path;
+    return {
+      for (final other in ProxyField.values)
+        if (other.path.length == path.length + 1 &&
+            stringListEquality.equals(other.path.sublist(0, path.length), path))
+          other.path.last,
+    };
+  }
+
+  CustomProxy withValue(String key, Object? value) => withValueAt([key], value);
+
+  CustomProxy withValueAt(List<String> path, Object? value) =>
+      copyWith(definition: _withPath(definition, path, value));
 }
 
 /// Per profile, since [target] names a proxy or group that profile defines.
@@ -1981,6 +2129,36 @@ Map<String, String> _geoXUrlToJson(Map<GeoResource, String> value) {
   return value.raw;
 }
 
+const _generalOverrideKeysJsonKey = 'general-override-keys';
+
+Set<GeneralOverrideKey> _generalOverrideKeysFromJson(List<Object?> json) => {
+  for (final path in json)
+    ?GeneralOverrideKey.values.firstWhereOrNull((key) => key.path == path),
+};
+
+/// Forced over every profile until they became optional overrides.
+const _legacyForcedGeneralKeys = [
+  GeneralOverrideKey.unifiedDelay,
+  GeneralOverrideKey.tcpConcurrent,
+  GeneralOverrideKey.ipv6,
+  GeneralOverrideKey.geodataLoader,
+];
+
+Map<String, Object?> _withLegacyGeneralOverrideKeys(Map<String, Object?> json) {
+  if (json.containsKey(_generalOverrideKeysJsonKey)) {
+    return json;
+  }
+  final testUrl = json[GeneralOverrideKey.testUrl.path];
+  return {
+    ...json,
+    _generalOverrideKeysJsonKey: [
+      for (final key in _legacyForcedGeneralKeys) key.path,
+      if (testUrl != null && testUrl != defaultTestUrl)
+        GeneralOverrideKey.testUrl.path,
+    ],
+  };
+}
+
 @freezed
 abstract class PatchClashConfig with _$PatchClashConfig {
   const factory PatchClashConfig({
@@ -2040,11 +2218,21 @@ abstract class PatchClashConfig with _$PatchClashConfig {
     @Default({}) Map<String, String> hosts,
     @Default(false) @JsonKey(name: 'geo-auto-update') bool geoAutoUpdate,
     @Default(24) @JsonKey(name: 'geo-update-interval') int geoUpdateInterval,
+    @Default(defaultTestUrl) @JsonKey(name: 'test-url') String testUrl,
+    @Default({})
+    @JsonKey(
+      name: _generalOverrideKeysJsonKey,
+      fromJson: _generalOverrideKeysFromJson,
+    )
+    Set<GeneralOverrideKey> generalOverrideKeys,
+    @Default(defaultMitm) Mitm mitm,
   }) = _PatchClashConfig;
 
   factory PatchClashConfig.fromJson(Map<String, Object?> json) =>
       _$PatchClashConfigFromJson(
-        _withLegacyTunOverride(_withLegacyDnsOverrideKeys(json)),
+        _withLegacyGeneralOverrideKeys(
+          _withLegacyTunOverride(_withLegacyDnsOverrideKeys(json)),
+        ),
       );
 
   factory PatchClashConfig.safeFormJson(Map<String, Object?>? json) {
@@ -2055,10 +2243,152 @@ abstract class PatchClashConfig with _$PatchClashConfig {
   }
 }
 
+/// Written over every profile's `mitm` section, so only the app turns it on.
+@freezed
+abstract class Mitm with _$Mitm {
+  const factory Mitm({
+    @Default(false) bool enable,
+    @Default([]) List<String> hostname,
+    @Default(false)
+    @JsonKey(name: 'skip-server-cert-verify')
+    bool skipServerCertVerify,
+    @Default(true) @JsonKey(name: 'auto-quic-block') bool autoQuicBlock,
+    @Default(false) bool h2,
+    @Default(false) @JsonKey(name: 'decrypt-untrusted') bool decryptUntrusted,
+    @JsonKey(name: 'trusted-fingerprint') String? trustedFingerprint,
+    @Default(false) bool capture,
+    @JsonKey(name: 'capture-entries') int? captureEntries,
+  }) = _Mitm;
+
+  factory Mitm.fromJson(Map<String, Object?> json) => _$MitmFromJson(json);
+}
+
+/// A body rewrite holds about ten times the body, a script on JSON twenty.
+const _desktopMitmLimits = {
+  'max-body-size': 4 << 20,
+  'body-buffer': 32 << 20,
+  'certificate-cache': 1024,
+  'script-concurrency': 4,
+  'script-memory': 256 << 20,
+  'capture-entries': 2000,
+  'capture-bytes': 64 << 20,
+};
+
+const _androidMitmLimits = {
+  'max-body-size': 2 << 20,
+  'body-buffer': 8 << 20,
+  'certificate-cache': 256,
+  'max-sessions': 256,
+  'script-concurrency': 2,
+  'script-memory': 64 << 20,
+  'capture-entries': 500,
+  'capture-bytes': 16 << 20,
+};
+
+/// Past the top option the byte limit drops records before the count does.
+const _desktopMitmCaptureOptions = [500, 1000, 2000, 5000, 10000, 20000];
+const _androidMitmCaptureOptions = [200, 500, 1000, 2000, 5000];
+
+List<int> mitmCaptureOptions({required bool isAndroid}) =>
+    isAndroid ? _androidMitmCaptureOptions : _desktopMitmCaptureOptions;
+
+Map<String, Object> _mitmLimits({required bool isAndroid}) =>
+    isAndroid ? _androidMitmLimits : _desktopMitmLimits;
+
+int mitmCaptureBytes({required bool isAndroid}) =>
+    _mitmLimits(isAndroid: isAndroid)['capture-bytes']! as int;
+
+int mitmMaxBodySize({required bool isAndroid}) =>
+    _mitmLimits(isAndroid: isAndroid)['max-body-size']! as int;
+
+extension MitmExt on Mitm {
+  int captureLimit({required bool isAndroid}) =>
+      captureEntries ??
+      _mitmLimits(isAndroid: isAndroid)['capture-entries']! as int;
+
+  /// Ahead of the list, since the first match decides.
+  Mitm decryptingHost(String host) => copyWith(
+    hostname: [
+      host,
+      for (final line in hostname)
+        if (line != host && line != '-$host') line,
+    ],
+  );
+
+  /// Ahead of the list, since the first match decides.
+  Mitm excludingHost(String host) => copyWith(
+    hostname: [
+      '-$host',
+      for (final line in hostname)
+        if (line != host && line != '-$host') line,
+    ],
+  );
+
+  /// The hostnames come from [rules] alone, which the user's own lead.
+  Map<String, Object?> coreJson(MitmRules rules) {
+    final json = toJson()
+      ..remove('hostname')
+      ..remove('decrypt-untrusted')
+      ..remove('trusted-fingerprint')
+      ..remove('capture')
+      ..remove('capture-entries');
+    return {
+      ...json,
+      ...rules.toJson(),
+      'decrypt-tls': decryptUntrusted || trustedFingerprint != null,
+      'ca-fingerprint': decryptUntrusted ? '' : trustedFingerprint ?? '',
+      'limits': {
+        ..._mitmLimits(isAndroid: system.isAndroid),
+        'capture-entries': ?captureEntries,
+      },
+    };
+  }
+}
+
+class MitmRules {
+  const MitmRules({
+    this.hostname = const [],
+    this.urlRewrite = const [],
+    this.headerRewrite = const [],
+    this.bodyRewrite = const [],
+    this.mapLocal = const [],
+    this.script = const [],
+  });
+
+  final List<String> hostname;
+  final List<String> urlRewrite;
+  final List<String> headerRewrite;
+  final List<String> bodyRewrite;
+  final List<String> mapLocal;
+  final List<String> script;
+
+  List<String> linesOf(MitmList list) => switch (list) {
+    MitmList.hostname => hostname,
+    MitmList.urlRewrite => urlRewrite,
+    MitmList.headerRewrite => headerRewrite,
+    MitmList.bodyRewrite => bodyRewrite,
+    MitmList.mapLocal => mapLocal,
+    MitmList.script => script,
+  };
+
+  Map<String, Object?> toJson() => {
+    for (final list in MitmList.values) list.key: linesOf(list),
+  };
+}
+
 extension PatchClashConfigExt on PatchClashConfig {
+  T? _picked<T>(GeneralOverrideKey key, T value) =>
+      generalOverrideKeys.contains(key) ? value : null;
+
+  Map<String, Object?> get generalOverrideJson => _overrideJson(
+    toJson(),
+    GeneralOverrideKey.values,
+    generalOverrideKeys.difference(const {GeneralOverrideKey.testUrl}),
+  );
+
   UpdateParams toUpdateParams({
     required List<String> authentication,
-    required bool skipCertVerify,
+    required CoreOptions options,
   }) {
     return UpdateParams(
       tun: tun,
@@ -2067,16 +2397,16 @@ extension PatchClashConfigExt on PatchClashConfig {
       findProcessMode: findProcessMode,
       mode: mode,
       logLevel: logLevel,
-      ipv6: ipv6,
-      tcpConcurrent: tcpConcurrent,
+      ipv6: _picked(GeneralOverrideKey.ipv6, ipv6),
+      tcpConcurrent: _picked(GeneralOverrideKey.tcpConcurrent, tcpConcurrent),
       externalController: externalController,
       secret: secret,
-      unifiedDelay: unifiedDelay,
+      unifiedDelay: _picked(GeneralOverrideKey.unifiedDelay, unifiedDelay),
       mixedPort: mixedPort,
       geoAutoUpdate: geoAutoUpdate,
       geoUpdateInterval: geoUpdateInterval,
       geoXUrl: geoXUrl.raw,
-      skipCertVerify: skipCertVerify,
+      options: options,
     );
   }
 
@@ -2097,6 +2427,8 @@ extension PatchClashConfigExt on PatchClashConfig {
     geoAutoUpdate: defaultClashConfig.geoAutoUpdate,
     geoUpdateInterval: defaultClashConfig.geoUpdateInterval,
     geoXUrl: defaultClashConfig.geoXUrl,
+    testUrl: defaultClashConfig.testUrl,
+    mitm: mitm.copyWith(capture: defaultClashConfig.mitm.capture),
   );
 
   PatchClashConfig ensureControllerSecret() {

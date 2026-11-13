@@ -8,7 +8,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/profiles/custom/providers.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -220,10 +220,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text(l.addSettingEntry));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('UDP'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(l.ipVersion));
-    await tester.pumpAndSettle();
+    for (final option in ['UDP', l.ipVersion]) {
+      await tester.ensureVisible(find.text(option));
+      await tester.pump();
+      await tester.tap(find.text(option));
+      await tester.pumpAndSettle();
+    }
     await tester.pageBack();
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, l.save));
@@ -401,7 +403,6 @@ void main() {
 
     await tester.tap(find.text('cn'));
     await tester.pumpAndSettle();
-    expect(find.byType(Dialog), findsNothing);
     expect(find.byType(TextFormField), findsNothing);
   });
 

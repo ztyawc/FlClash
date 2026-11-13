@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod/misc.dart' show Override;
 
@@ -88,9 +88,7 @@ class _NestedFormSheetState<T> extends ConsumerState<NestedFormSheet<T>> {
 
   Future<void> _handleExit() async {
     if (_changed) {
-      final res = await dialogs.showMessage(
-        message: TextSpan(text: context.appLocalizations.saveChanges),
-      );
+      final res = await dialogs.showSaveChanges();
       if (res == null || !mounted) {
         return;
       }

@@ -1,18 +1,20 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
-import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'batch_section.dart';
 import 'form_page.dart';
 import 'form_row.dart';
+import 'list_edit_view.dart';
+import 'quick_edit.dart';
 
 typedef _Entry = MapEntry<String, String>;
 
 class MapEditView extends ConsumerStatefulWidget {
   final String title;
+  final String? description;
   final Map<String, String> entries;
   final Widget Function(MapEntry<String, String> item) titleBuilder;
   final Widget Function(MapEntry<String, String> item)? subtitleBuilder;
@@ -22,6 +24,7 @@ class MapEditView extends ConsumerStatefulWidget {
   const MapEditView({
     super.key,
     required this.title,
+    this.description,
     required this.entries,
     required this.titleBuilder,
     this.subtitleBuilder,
@@ -36,6 +39,9 @@ class MapEditView extends ConsumerStatefulWidget {
 class _MapEditViewState extends EditViewState<MapEditView, _Entry> {
   @override
   String get title => widget.title;
+
+  @override
+  String? get description => widget.description;
 
   @override
   List<_Entry> get initialEntries => widget.entries.entries.toList();
@@ -58,36 +64,68 @@ class _MapEditViewState extends EditViewState<MapEditView, _Entry> {
       Map<String, String>.fromEntries(entries);
 
   @override
-  Future<List<_Entry>?> showEntryEditor(_Entry? entry) {
-    return showFormSheet<List<_Entry>>(
-      context: context,
-      builder: (_) => _MapEntryForm(
-        listTitle: widget.title,
-        entry: entry,
-        existingKeys: entries.map(idOf).toSet(),
-        keyMaxLength: widget.keyMaxLength,
-        valueMaxLength: widget.valueMaxLength,
-      ),
+  Future<_Entry?> showEntryEditor(_Entry? entry) {
+    return showMapEntryForm(
+      context,
+      entry: entry,
+      existingKeys: entries.map(idOf).toSet(),
+      keyMaxLength: widget.keyMaxLength,
+      valueMaxLength: widget.valueMaxLength,
+    );
+  }
+
+  @override
+  Future<void> showQuickEdit(
+    List<_Entry> entries,
+    ValueChanged<List<_Entry>> onChanged,
+  ) {
+    return showMapQuickEdit(
+      context,
+      title: widget.title,
+      entries: entries,
+      keyMaxLength: widget.keyMaxLength,
+      valueMaxLength: widget.valueMaxLength,
+      onChanged: onChanged,
     );
   }
 }
 
+/// Adds when [entry] is null and edits it otherwise.
+Future<MapEntry<String, String>?> showMapEntryForm(
+  BuildContext context, {
+  MapEntry<String, String>? entry,
+  required Set<String> existingKeys,
+  int? keyMaxLength,
+  int? valueMaxLength,
+  bool ignoreKeyCase = false,
+}) {
+  return showFormSheet<_Entry>(
+    context: context,
+    builder: (_) => _MapEntryForm(
+      entry: entry,
+      existingKeys: existingKeys,
+      keyMaxLength: keyMaxLength,
+      valueMaxLength: valueMaxLength,
+      ignoreKeyCase: ignoreKeyCase,
+    ),
+  );
+}
+
 enum _MapEntryField { key, value }
 
-/// Adds when [entry] is null, and then a batch may add several entries.
 class _MapEntryForm extends StatefulWidget {
-  final String listTitle;
   final _Entry? entry;
   final Set<String> existingKeys;
   final int? keyMaxLength;
   final int? valueMaxLength;
+  final bool ignoreKeyCase;
 
   const _MapEntryForm({
-    required this.listTitle,
     required this.entry,
     required this.existingKeys,
     required this.keyMaxLength,
     required this.valueMaxLength,
+    required this.ignoreKeyCase,
   });
 
   @override
@@ -98,28 +136,11 @@ class _MapEntryFormState extends State<_MapEntryForm> {
   final _valueFocusNode = FocusNode();
   late final TextEditingController _keyController;
   late final TextEditingController _valueController;
-  final _batchController = TextEditingController();
-  bool _isBatch = false;
   bool _attempted = false;
-  ParsedInput<_Entry>? _parsed;
 
   String get _keyLabel => context.appLocalizations.key;
 
   String get _valueLabel => context.appLocalizations.value;
-
-  BatchInput<_Entry> get _batchInput {
-    return BatchInput(
-      label: widget.listTitle,
-      formatTip: context.appLocalizations.batchMapInputTip,
-      parse: (text) => parseMapInput(
-        text,
-        existingKeys: widget.existingKeys,
-        keyMaxLength: widget.keyMaxLength,
-        valueMaxLength: widget.valueMaxLength,
-      ),
-      issueMessage: _batchIssueMessage,
-    );
-  }
 
   @override
   void initState() {
@@ -133,25 +154,16 @@ class _MapEntryFormState extends State<_MapEntryForm> {
     _valueFocusNode.dispose();
     _keyController.dispose();
     _valueController.dispose();
-    _batchController.dispose();
     super.dispose();
   }
 
-  String _batchIssueMessage(InputIssue issue) {
-    final appLocalizations = context.appLocalizations;
-    return switch (issue.kind) {
-      InputIssueKind.keyTooLong => appLocalizations.maxLengthTip(
-        _keyLabel,
-        widget.keyMaxLength!,
-      ),
-      InputIssueKind.valueTooLong => appLocalizations.maxLengthTip(
-        _valueLabel,
-        widget.valueMaxLength!,
-      ),
-      InputIssueKind.missingValue => appLocalizations.emptyTip(_valueLabel),
-      InputIssueKind.invalidUrl ||
-      InputIssueKind.invalidValue => appLocalizations.urlTip(_valueLabel),
-    };
+  bool _isTakenKey(String key) {
+    String fold(String value) =>
+        widget.ignoreKeyCase ? value.toLowerCase() : value;
+    final ownKey = widget.entry?.key;
+    return widget.existingKeys.any(
+      (existing) => existing != ownKey && fold(existing) == fold(key),
+    );
   }
 
   ({_MapEntryField field, String message})? _issue() {
@@ -163,7 +175,7 @@ class _MapEntryFormState extends State<_MapEntryForm> {
         message: appLocalizations.emptyTip(_keyLabel),
       );
     }
-    if (key != widget.entry?.key && widget.existingKeys.contains(key)) {
+    if (_isTakenKey(key)) {
       return (
         field: _MapEntryField.key,
         message: appLocalizations.existsTip(_keyLabel),
@@ -178,96 +190,36 @@ class _MapEntryFormState extends State<_MapEntryForm> {
     return null;
   }
 
-  void _toggleBatch() {
-    setState(() {
-      _isBatch = !_isBatch;
-      _attempted = false;
-      if (_isBatch && _batchController.text.isEmpty) {
-        _batchController.text = [
-          _keyController.text,
-          _valueController.text,
-        ].map((text) => text.trim()).where((text) => text.isNotEmpty).join(' ');
-      }
-      if (_isBatch) {
-        _parsed = _batchInput.parse(_batchController.text);
-      }
-    });
-  }
-
   void _handleChanged(String _) {
     if (_attempted) {
       setState(() {});
     }
   }
 
-  void _handleBatchChanged(String text) {
-    setState(() {
-      _parsed = _batchInput.parse(text);
-    });
-  }
-
   void _handleSubmit() {
-    if (_isBatch) {
-      final parsed = _parsed;
-      if (parsed == null || !parsed.isValid || parsed.entries.isEmpty) {
-        setState(() {
-          _attempted = true;
-        });
-        return;
-      }
-      Navigator.of(context).pop<List<_Entry>>(parsed.entries);
-      return;
-    }
     if (_issue() != null) {
       setState(() {
         _attempted = true;
       });
       return;
     }
-    Navigator.of(context).pop<List<_Entry>>([
+    Navigator.of(context).pop<_Entry>(
       MapEntry(_keyController.text.trim(), _valueController.text.trim()),
-    ]);
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final appLocalizations = context.appLocalizations;
-    final issue = _attempted && !_isBatch ? _issue() : null;
+    final issue = _attempted ? _issue() : null;
     return FormPage(
-      title: _isBatch
-          ? appLocalizations.batchAdd
-          : widget.entry == null
+      title: widget.entry == null
           ? appLocalizations.add
           : appLocalizations.edit,
       saveLabel: appLocalizations.confirm,
       onSave: _handleSubmit,
-      error: _isBatch
-          ? _batchInput.errorOf(
-              appLocalizations,
-              _parsed,
-              attempted: _attempted,
-            )
-          : issue?.message,
-      actions: [
-        if (widget.entry == null)
-          IconButtonData(
-            glyph: _isBatch ? AppGlyphs.textShort : AppGlyphs.listAdd,
-            tooltip: _isBatch
-                ? appLocalizations.singleAdd
-                : appLocalizations.batchAdd,
-            onPressed: _toggleBatch,
-          ),
-      ],
-      children: [
-        _isBatch
-            ? BatchSection(
-                batch: _batchInput,
-                controller: _batchController,
-                parsed: _parsed,
-                onChanged: _handleBatchChanged,
-              )
-            : _buildFields(appLocalizations, issue?.field),
-      ],
+      error: issue?.message,
+      children: [_buildFields(appLocalizations, issue?.field)],
     );
   }
 

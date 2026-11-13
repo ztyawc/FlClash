@@ -6,11 +6,12 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/config.dart';
 import 'package:flutter/foundation.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window/window.dart';
 
 class Window implements WindowPort {
+  static const _tintOpacity = 0.5;
   static Window? _instance;
   bool _supportsPosition = false;
   WindowEffect? _blurEffect;
@@ -125,9 +126,11 @@ class Window implements WindowPort {
     if (cached != null) {
       return cached;
     }
+    // Windows 10's acrylic accent makes the window trail the pointer while it
+    // is dragged, so Windows 10 takes the plain accent blur.
     final candidates = system.isMacOS
-        ? const [WindowEffect.blur]
-        : const [WindowEffect.acrylic, WindowEffect.blur];
+        ? const [WindowEffect.glass, WindowEffect.blur]
+        : const [WindowEffect.mica, WindowEffect.blur];
     for (final effect in candidates) {
       if (await desktopWindow.isEffectSupported(effect)) {
         return _blurEffect = effect;
@@ -136,25 +139,26 @@ class Window implements WindowPort {
     return WindowEffect.none;
   }
 
-  /// Only Windows 10's accent blur uses the tint; it draws nothing without one.
+  /// Only Windows 10's accent blur takes the tint natively; it draws nothing
+  /// without one. Every material still keeps the sidebar's own color half over
+  /// it, or the rail takes the hue of whatever lies behind the window while
+  /// the content beside it keeps the theme's.
   @override
-  Future<bool> setBlur({
+  Future<double?> setBlur({
     required bool enabled,
     required Brightness brightness,
     required Color tint,
   }) async {
     if (system.isLinux) {
-      return false;
+      return null;
     }
     final effect = enabled ? await _resolveBlurEffect() : WindowEffect.none;
     await desktopWindow.setEffect(
       effect,
-      tint: system.isWindows
-          ? tint.withValues(alpha: kSidebarBlurOpacity)
-          : null,
+      tint: system.isWindows ? tint.withValues(alpha: _tintOpacity) : null,
       brightness: brightness,
     );
-    return effect != WindowEffect.none;
+    return effect == WindowEffect.none ? null : _tintOpacity;
   }
 
   /// Every desktop runner leaves the window hidden until [init] reveals it, so

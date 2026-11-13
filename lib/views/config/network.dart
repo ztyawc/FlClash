@@ -8,7 +8,7 @@ import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/views/config/override.dart';
 import 'package:fl_clash/views/config/tun.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' show dirname, join;
 
@@ -406,38 +406,12 @@ class TunSection extends ConsumerWidget {
       return generateSection(
         title: appLocalizations.tun,
         items: tunItems(isMipsStack: isMipsStack),
-        footer: appLocalizations.bypassPrivateRouteDesc,
       );
     }
-    final spec = appTunOverrideSpec(isLinux: isLinux, isWindows: isWindows);
-    final picked = ref.watch(
-      patchClashConfigProvider.select((state) => state.tunOverrideKeys),
-    );
-    final listed = [
-      for (final key in spec.values)
-        if (picked.contains(key)) key,
-    ];
-    void handleAdd() => showOverrideAddSheet(context, ref, spec);
-    return generateAnimatedSection(
+    return OverrideSection(
       title: appLocalizations.tun,
-      items: [
-        const BypassPrivateRouteItem(key: ValueKey(#bypassPrivateRoute)),
-        for (final key in listed)
-          OverrideEntry(key: ValueKey(key), spec: spec, overrideKey: key),
-        if (listed.length < spec.values.length)
-          FormRow(
-            key: const ValueKey(#add),
-            leading: EntryButton.add(onPressed: handleAdd),
-            title: spec.target.addEntry(appLocalizations),
-            titleStyle: TextStyle(color: context.colorScheme.primary),
-            onPressed: handleAdd,
-          ),
-      ],
-      footer: [
-        appLocalizations.bypassPrivateRouteDesc,
-        appLocalizations.tunOverrideDesc,
-        ?spec.footerOf(listed, appLocalizations),
-      ].join('\n'),
+      spec: appTunOverrideSpec(isLinux: isLinux, isWindows: isWindows),
+      items: const [BypassPrivateRouteItem(key: ValueKey(#bypassPrivateRoute))],
     );
   }
 }
@@ -508,10 +482,7 @@ class VpnSections extends ConsumerWidget {
     );
     return Column(
       children: [
-        generateSection(
-          items: const [VPNItem()],
-          footer: appLocalizations.vpnEnableDesc,
-        ),
+        generateSection(items: const [VPNItem()]),
         generateSection(
           title: 'VPN',
           items: const [
@@ -525,7 +496,6 @@ class VpnSections extends ConsumerWidget {
             if (authenticationEnable)
               appLocalizations.authenticationSystemProxyDesc,
             appLocalizations.bypassDomainDesc,
-            appLocalizations.ipv6InboundDesc,
           ].join('\n'),
         ),
       ],
@@ -546,7 +516,6 @@ class SystemProxySection extends StatelessWidget {
         const BypassDomainItem(),
         if (system.isWindows) const LoopbackItem(),
       ],
-      footer: appLocalizations.bypassDomainDesc,
     );
   }
 }
@@ -562,12 +531,6 @@ class NetworkOptionsSection extends ConsumerWidget {
       ),
     );
     final appLocalizations = context.appLocalizations;
-    final footer = [
-      if (system.isDesktop) ...[
-        appLocalizations.tunDesc,
-        if (isCustomInterfaceName) appLocalizations.interfaceNameDesc,
-      ],
-    ];
     return generateSection(
       title: appLocalizations.options,
       items: networkOptionsItems(
@@ -575,7 +538,7 @@ class NetworkOptionsSection extends ConsumerWidget {
         isMacOS: system.isMacOS,
         isCustomInterfaceName: isCustomInterfaceName,
       ),
-      footer: footer.isEmpty ? null : footer.join('\n'),
+      footer: system.isDesktop ? appLocalizations.tunDesc : null,
     );
   }
 }
@@ -586,9 +549,10 @@ class NetworkListView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-      ).copyWith(top: context.contentTopPadding, bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+        top: context.sectionsTopPadding,
+        bottom: 16 + context.bottomInset,
+      ),
       children: [
         if (system.isAndroid) const VpnSections(),
         if (system.isDesktop) const SystemProxySection(),

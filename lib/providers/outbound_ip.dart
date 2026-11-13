@@ -29,22 +29,21 @@ class OutboundIpProbe extends _$OutboundIpProbe
       proxyName,
     );
     final value = parseOutboundIp(result);
-    final chains = result?.chains ?? const <String>[];
-    final exit = chains.firstOrNull;
+    final exit = result.chains.firstOrNull;
     return {
       target: ProbeAnswer(
         value: value,
-        coreEpoch: result?.coreEpoch,
-        picksVersion: result?.picksVersion,
-        chains: chains,
+        coreEpoch: result.coreEpoch,
+        routeVersion: result.routeVersion,
+        hits: result.hits,
       ),
       // A node leaves through the same address whatever it is asked for.
       if (value != null && exit != null && exit != target)
         exit: ProbeAnswer(
           value: value,
-          coreEpoch: result?.coreEpoch,
-          picksVersion: result?.picksVersion,
-          chains: [exit],
+          coreEpoch: result.coreEpoch,
+          routeVersion: result.routeVersion,
+          hits: result.nodeHits,
         ),
     };
   }

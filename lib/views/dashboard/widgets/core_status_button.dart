@@ -6,8 +6,9 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 class CoreStatusButton extends ConsumerStatefulWidget {
   const CoreStatusButton({super.key});
@@ -78,7 +79,7 @@ class _CoreStatusButtonState extends ConsumerState<CoreStatusButton> {
     try {
       await ref.read(coreActionProvider.notifier).restartCore();
     } catch (error) {
-      dialogs.showNotifier(error.toString(), level: MessageLevel.error);
+      dialogs.showBanner(error.toString(), level: BannerLevel.error);
     }
   }
 
@@ -87,71 +88,66 @@ class _CoreStatusButtonState extends ConsumerState<CoreStatusButton> {
     final coreStatus = _holdTimer != null ? CoreStatus.connecting : _status;
     final appLocalizations = context.appLocalizations;
     final colorScheme = context.colorScheme;
-    final glass = TonalButtonTheme.glassOf(context);
-    ButtonStyle? tinted(Color? color) => glass && color != null
-        ? LiquidGlass.buttonStyle(
-            (_) => LiquidGlassStyle.tinted(colorScheme, color),
-          )
-        : null;
     final statusColor = switch (coreStatus) {
       CoreStatus.connecting => null,
       CoreStatus.connected => colorScheme.successContainer,
       CoreStatus.disconnected => colorScheme.errorContainer,
     };
+    final statusForeground = switch (coreStatus) {
+      CoreStatus.connecting => null,
+      CoreStatus.connected => colorScheme.onSuccessContainer,
+      CoreStatus.disconnected => colorScheme.onErrorContainer,
+    };
+    final pane = TonalButtonTheme.glassOf(context) && statusColor != null
+        ? LiquidGlassStyle.tinted(colorScheme, statusColor)
+        : null;
+    final iconOnly =
+        coreStatus == CoreStatus.connected || ViewScope.isMobileOf(context);
+    final icon = switch (coreStatus) {
+      CoreStatus.connecting => ActivityIndicator(
+        color: iconOnly ? null : colorScheme.onPrimary,
+      ),
+      CoreStatus.connected => const GlyphIcon(AppGlyphs.check, fill: 1),
+      CoreStatus.disconnected => const GlyphIcon(AppGlyphs.refresh, fill: 1),
+    };
     return Tooltip(
       message: appLocalizations.coreStatus,
       child: FadeScaleBox(
         alignment: Alignment.centerRight,
-        child: coreStatus == CoreStatus.connected
+        child: iconOnly
             ? IconButton.filled(
-                style: ElasticPress.buttonStyle
-                    .merge(tinted(statusColor))
-                    .merge(
-                      IconButton.styleFrom(
-                        backgroundColor: context.colorScheme.successContainer,
-                        foregroundColor: context.colorScheme.onSuccessContainer,
-                      ),
-                    ),
+                key: ValueKey(coreStatus),
+                style: ButtonStyle.from(
+                  backgroundColor: pane == null
+                      ? statusColor
+                      : Colors.transparent,
+                  foregroundColor: statusForeground,
+                  backgroundBuilder: pane == null
+                      ? null
+                      : LiquidGlass.buttonBackground((_) => pane),
+                  pressLook: PressLook.none,
+                ),
                 onPressed: _handleConnection,
-                icon: const GlyphIcon(AppGlyphs.check, fill: 1),
+                icon: icon,
               )
             : FilledButton.icon(
                 key: ValueKey(coreStatus),
                 onPressed: _handleConnection,
-                style: ElasticPress.buttonStyle
-                    .merge(tinted(statusColor))
-                    .merge(
-                      FilledButton.styleFrom(
-                        backgroundColor: statusColor,
-                        foregroundColor: switch (coreStatus) {
-                          CoreStatus.connecting => null,
-                          CoreStatus.connected =>
-                            context.colorScheme.onSuccessContainer,
-                          CoreStatus.disconnected =>
-                            context.colorScheme.onErrorContainer,
-                        },
-                      ),
-                    ),
-                icon: SizedBox(
-                  height: globalState.measure.textHeight(
+                style: ButtonStyle.from(
+                  backgroundColor: pane == null
+                      ? statusColor
+                      : Colors.transparent,
+                  foregroundColor: statusForeground,
+                  backgroundBuilder: pane == null
+                      ? null
+                      : LiquidGlass.buttonBackground((_) => pane),
+                  pressLook: PressLook.none,
+                ),
+                icon: SizedBox.square(
+                  dimension: globalState.measure.textHeight(
                     AppTextStyle.subheadline,
                   ),
-                  width: globalState.measure.textHeight(
-                    AppTextStyle.subheadline,
-                  ),
-                  child: switch (coreStatus) {
-                    CoreStatus.connecting => CommonCircleLoading(
-                      color: context.colorScheme.onPrimary,
-                    ),
-                    CoreStatus.connected => const GlyphIcon(
-                      AppGlyphs.check,
-                      fill: 1,
-                    ),
-                    CoreStatus.disconnected => const GlyphIcon(
-                      AppGlyphs.refresh,
-                      fill: 1,
-                    ),
-                  },
+                  child: icon,
                 ),
                 label: Text(switch (coreStatus) {
                   CoreStatus.connecting => appLocalizations.connecting,

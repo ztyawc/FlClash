@@ -3,8 +3,8 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 
 const _scale = 3;
 const _side = 24 * _scale;
@@ -41,6 +41,7 @@ final _glyphs = {
   'remove': AppGlyphs.remove,
   'addCircle': AppGlyphs.addCircle,
   'removeCircle': AppGlyphs.removeCircle,
+  'clearField': AppGlyphs.clearField,
   'close': AppGlyphs.close,
   'check': AppGlyphs.check,
   'checkDouble': AppGlyphs.checkDouble,
@@ -81,6 +82,7 @@ final _glyphs = {
   'sliders': AppGlyphs.sliders,
   'wrench': AppGlyphs.wrench,
   'toggle': AppGlyphs.toggle,
+  'toggleOn': AppGlyphs.toggleOn,
   'pin': AppGlyphs.pin,
   'eye': AppGlyphs.eye,
   'eyeOff': AppGlyphs.eyeOff,
@@ -203,17 +205,24 @@ void main() {
     expect(_alphaAt(filled, 12, 13.1), greaterThan(0));
   });
 
+  test('a solid line grows with the lines as the glyph fills', () async {
+    const dot = Glyph([
+      GlyphCircle(12, 12, 2, role: GlyphRole.line, solid: true),
+    ]);
+    final outline = await _render(dot, 0);
+    final filled = await _render(dot, 1);
+
+    expect(_alphaAt(outline, 12, 14.2), 0);
+    expect(_alphaAt(filled, 12, 14.2), greaterThan(0));
+  });
+
   for (final MapEntry(key: name, value: glyph) in _glyphs.entries) {
     test('$name fills into a different shape than its outline', () async {
       final outline = await _render(glyph, 0);
       final filled = await _render(glyph, 1);
 
       expect(outline.any((channel) => channel != 0), isTrue);
-      if (glyph.shapes.any((shape) => !shape.solid)) {
-        expect(filled, isNot(outline));
-      } else {
-        expect(filled, outline, reason: 'solid shapes are already filled');
-      }
+      expect(filled, isNot(outline));
     });
 
     test('$name shows no detail midway', () async {

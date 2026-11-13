@@ -13,8 +13,8 @@ import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class ExternalProvidersSliver extends ConsumerStatefulWidget {
@@ -40,15 +40,7 @@ class _ExternalProvidersSliverState
       await Future.wait(
         widget.providers.map((provider) async {
           try {
-            final message = await proxiesAction.updateProvider(
-              provider,
-              showLoading: true,
-            );
-            if (message.isNotEmpty) {
-              messages.add(
-                UpdatingMessage(label: provider.name, message: message),
-              );
-            }
+            await proxiesAction.updateProvider(provider, showLoading: true);
           } catch (error) {
             messages.add(
               UpdatingMessage(
@@ -87,7 +79,7 @@ class _ExternalProvidersSliverState
             ],
           ),
         ),
-        SliverList.builder(
+        SliverPrismList(
           itemCount: providers.length,
           itemBuilder: (_, index) {
             final provider = providers[index];
@@ -157,13 +149,10 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
   Future<void> _handleUpdateProvider() async {
     if (!_isSyncable) return;
     final proxiesAction = ref.read(proxiesActionProvider.notifier);
-    await globalState.safeRun(() async {
-      final message = await proxiesAction.updateProvider(
-        provider,
-        showLoading: true,
-      );
-      if (message.isNotEmpty) throw MessageException(message);
-    }, silence: false);
+    await globalState.safeRun(
+      () => proxiesAction.updateProvider(provider, showLoading: true),
+      silence: false,
+    );
     proxiesAction.updateGroupsDebounce();
   }
 
@@ -199,8 +188,9 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
         EditorPage(
           title: provider.name,
           load: isRuleSet
-              ? () => core.dumpRuleSet(path)
-              : () => _readProviderText(path),
+              ? () async =>
+                    CodeForgeDocument.fromText(await core.dumpRuleSet(path))
+              : () => _openProviderText(path),
           schema: EditorSchema.provider,
         ),
       ),
@@ -212,7 +202,7 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
       dialogs.showCommonDialog<void>(
         child: Builder(
           builder: (context) {
-            return CommonDialog(
+            return AlertDialog(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               title: context.appLocalizations.subscriptionInfo,
               actions: [
@@ -233,12 +223,12 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
     );
   }
 
-  List<CommonPopupMenuItem> _menuItems(BuildContext context) {
+  List<PopupMenuItem> _menuItems(BuildContext context) {
     final appLocalizations = context.appLocalizations;
     final subscriptionInfo = provider.subscriptionInfo;
     return [
       if (_file == _ProviderFile.text)
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.edit,
           label: appLocalizations.edit,
           onPressed: () {
@@ -246,14 +236,14 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
           },
         ),
       if (_file == _ProviderFile.ruleSet)
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.eye,
           label: appLocalizations.preview,
           onPressed: () {
             _handlePreviewProvider(context);
           },
         ),
-      CommonPopupMenuItem(
+      PopupMenuItem(
         glyph: AppGlyphs.upload,
         label: appLocalizations.upload,
         onPressed: () {
@@ -261,7 +251,7 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
         },
       ),
       if (_isSyncable)
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.sync,
           label: appLocalizations.sync,
           onPressed: () {
@@ -269,7 +259,7 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
           },
         ),
       if (subscriptionInfo != null && subscriptionInfo.total > 0)
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.dataUsage,
           label: appLocalizations.subscriptionInfo,
           onPressed: _handleShowSubscriptionInfo,
@@ -310,16 +300,22 @@ class _ExternalProviderItem extends StatelessWidget {
     final appLocalizations = context.appLocalizations;
     final count = provider.count;
     final updateAt = provider.updateAt;
+    final subscriptionInfo = provider.subscriptionInfo;
+    final usage = subscriptionInfo?.usage;
     return DecorationListItem(
       onPressed: onPressed,
       title: ChipTitle(
         title: provider.name,
-        expire: provider.subscriptionInfo?.expireDate,
+        chip: usage == null ? null : count.compact,
+        expire: subscriptionInfo?.expireDate,
       ),
-      subtitle: Text(switch (provider.type) {
-        'Proxy' => appLocalizations.proxiesCount(count, count.compact),
-        _ => appLocalizations.rulesCount(count, count.compact),
-      }),
+      subtitle: switch ((subscriptionInfo, usage)) {
+        (final info?, final usage?) => _TrafficMeter(info: info, usage: usage),
+        _ => Text(switch (provider.type) {
+          'Proxy' => appLocalizations.proxiesCount(count, count.compact),
+          _ => appLocalizations.rulesCount(count, count.compact),
+        }),
+      },
       trailing: AnimatedSwitcher(
         duration: context.motionDuration(commonDuration),
         layoutBuilder: (current, previous) => Stack(
@@ -327,7 +323,7 @@ class _ExternalProviderItem extends StatelessWidget {
           children: [...previous, ?current],
         ),
         child: isUpdating
-            ? const CommonCircleLoading(key: ValueKey('loading'), size: 24)
+            ? const ActivityIndicator(key: ValueKey('loading'), size: 24)
             : LastUpdateTimeText(
                 key: const ValueKey('time'),
                 lastUpdateDate: updateAt.microsecondsSinceEpoch > 0
@@ -341,9 +337,37 @@ class _ExternalProviderItem extends StatelessWidget {
   }
 }
 
-Future<String> _readProviderText(String path) async {
+class _TrafficMeter extends StatelessWidget {
+  final SubscriptionInfo info;
+  final double usage;
+
+  const _TrafficMeter({required this.info, required this.usage});
+
+  @override
+  Widget build(BuildContext context) {
+    final used = info.upload + info.download;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 6,
+      children: [
+        Text(
+          '${used.traffic.show} / ${info.total.traffic.show}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        LinearProgressIndicator(
+          minHeight: 4,
+          value: usage,
+          backgroundColor: context.colorScheme.primary.opacity15,
+        ),
+      ],
+    );
+  }
+}
+
+Future<CodeForgeDocument> _openProviderText(String path) async {
   try {
-    return await readTextFileTask(path) ?? '';
+    return await openEditorFile(path);
   } on FormatException {
     throw MessageException(currentAppLocalizations.nonTextProviderFile);
   }
@@ -394,10 +418,9 @@ Future<void> _sideLoadProvider(
   final path = provider.path;
   if (path == null) return;
   final data = _decodeProviderFile(bytes);
-  final message = await ref
+  await ref
       .read(proxiesActionProvider.notifier)
       .sideLoadExternalProvider(provider, data, showLoading: true);
-  if (message.isNotEmpty) throw MessageException(message);
   await File(path).safeWriteAsBytes(bytes);
 }
 
@@ -412,14 +435,10 @@ class _EditProviderView extends ConsumerStatefulWidget {
 }
 
 class _EditProviderViewState extends ConsumerState<_EditProviderView> {
-  String? _raw;
-
-  Future<String> _load() async => _raw = await _readProviderText(widget.path);
-
-  Future<void> _handleSave(BuildContext context, String content) async {
+  Future<void> _handleSave(BuildContext context, EditorContent content) async {
     final proxiesAction = ref.read(proxiesActionProvider.notifier);
     final saved = await globalState.safeRun<bool>(() async {
-      await _sideLoadProvider(ref, widget.provider, utf8.encode(content));
+      await _sideLoadProvider(ref, widget.provider, await content.readBytes());
       return true;
     }, silence: false);
     if (saved != true) {
@@ -431,15 +450,8 @@ class _EditProviderViewState extends ConsumerState<_EditProviderView> {
     }
   }
 
-  Future<bool> _handlePop(BuildContext context, String content) async {
-    final raw = _raw;
-    if (raw == null || content == raw) {
-      return true;
-    }
-    final res = await dialogs.showMessage(
-      title: widget.provider.name,
-      message: TextSpan(text: context.appLocalizations.saveChanges),
-    );
+  Future<bool> _handlePop(BuildContext context, EditorContent content) async {
+    final res = await dialogs.showSaveChanges(title: widget.provider.name);
     if (res == null) {
       return false;
     }
@@ -454,7 +466,7 @@ class _EditProviderViewState extends ConsumerState<_EditProviderView> {
   Widget build(BuildContext context) {
     return EditorPage(
       title: widget.provider.name,
-      load: _load,
+      load: () => _openProviderText(widget.path),
       schema: EditorSchema.provider,
       onSave: (context, _, content) => _handleSave(context, content),
       onPop: (context, _, content) => _handlePop(context, content),

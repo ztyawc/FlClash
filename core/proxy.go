@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"strings"
@@ -102,24 +103,53 @@ func handleGetProxies() ProxiesData {
 
 // Proxy.MarshalJSON encodes each node twice, with history the host never reads.
 func proxyView(proxy constant.Proxy) any {
-	node := nodeView{Name: proxy.Name(), Type: proxy.Type().String()}
+	node := nodeView{
+		Name:         proxy.Name(),
+		Type:         proxy.Type().String(),
+		ProviderName: proxy.ProxyInfo().ProviderName,
+	}
 	if !isProxyGroupType(proxy.Type()) {
 		return node
 	}
-	data, err := proxy.Adapter().MarshalJSON()
-	view := map[string]any{}
-	if err == nil {
-		err = json.Unmarshal(data, &view)
-	}
+	view, err := groupView(proxy)
 	if err != nil {
 		log.Warnln("[APP] encode group %s: %v", node.Name, err)
 		return node
 	}
-	view["name"] = node.Name
-	if isBuiltInGlobal(proxy) {
-		view["hidden"] = true
-	}
 	return view
+}
+
+// No group encodes its own name, so it is appended rather than re-encoded.
+func groupView(proxy constant.Proxy) (json.RawMessage, error) {
+	data, err := proxy.Adapter().MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	if isBuiltInGlobal(proxy) {
+		view := map[string]any{}
+		if err := json.Unmarshal(data, &view); err != nil {
+			return nil, err
+		}
+		view["hidden"] = true
+		if data, err = json.Marshal(view); err != nil {
+			return nil, err
+		}
+	}
+	if len(data) < 2 || data[0] != '{' || data[len(data)-1] != '}' {
+		return nil, fmt.Errorf("encoding is not an object: %.32s", data)
+	}
+	name, err := json.Marshal(proxy.Name())
+	if err != nil {
+		return nil, err
+	}
+	view := make(json.RawMessage, 0, len(data)+len(name)+len(`,"name":`))
+	view = append(view, data[:len(data)-1]...)
+	if len(data) > 2 {
+		view = append(view, ',')
+	}
+	view = append(view, `"name":`...)
+	view = append(view, name...)
+	return append(view, '}'), nil
 }
 
 // mihomo builds its own GLOBAL over the reserved provider, which no configured
@@ -168,7 +198,7 @@ func handleChangeProxy(params *ChangeProxyParams) *ChangeProxyResult {
 		return &ChangeProxyResult{Message: err.Error()}
 	}
 	changed := selector.Now() != before
-	refreshRouteLocked(false)
+	refreshRouteLocked(routeUnchanged)
 	return &ChangeProxyResult{Changed: changed}
 }
 
@@ -190,9 +220,9 @@ const validationNameSuffix = "\x00validate"
 
 // The per-proxy parser the config load runs; checks across proxies, such as
 // duplicate names, are left to the load itself.
-func handleValidateProxies(mappings []map[string]any) []string {
-	results := make([]string, len(mappings))
-	for i, mapping := range mappings {
+func handleValidateProxies(params ProxiesParams) []ValidationIssue {
+	issues := []ValidationIssue{}
+	for i, mapping := range params.Proxies {
 		name, _ := mapping["name"].(string)
 		probe := mapping
 		switch mapping["type"] {
@@ -202,17 +232,17 @@ func handleValidateProxies(mappings []map[string]any) []string {
 		}
 		proxy, err := adapter.ParseProxy(probe)
 		if err != nil {
-			results[i] = strings.ReplaceAll(err.Error(), validationNameSuffix, "")
+			issues = append(issues, ValidationIssue{Index: i, Message: strings.ReplaceAll(err.Error(), validationNameSuffix, "")})
 			continue
 		}
 		_ = proxy.Close()
 	}
-	return results
+	return issues
 }
 
 // The share-link list a proxy provider also accepts, plain or base64.
-func handleConvertProxies(path string) ([]map[string]any, error) {
-	buf, err := os.ReadFile(path)
+func handleConvertProxies(params PathParams) ([]map[string]any, error) {
+	buf, err := os.ReadFile(params.Path)
 	if err != nil {
 		return nil, err
 	}

@@ -1,16 +1,16 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:code_forge/code_forge.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
-import 'package:fl_clash/ui/navigator.dart';
-import 'package:fl_clash/ui/popup.dart';
-import 'package:flutter/gestures.dart' show kSecondaryButton;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
@@ -30,7 +30,7 @@ void main() {
         ],
         child: EditorPage(
           title: 'Editor',
-          load: () => content.future,
+          load: () async => CodeForgeDocument.fromText(await content.future),
           onSave: (_, _, _) {},
         ),
       ),
@@ -60,7 +60,7 @@ void main() {
         ],
         child: EditorPage(
           title: 'Editor',
-          load: () async => document,
+          load: () => CodeForgeDocument.fromText(document),
           onSave: (_, _, _) {},
         ),
       ),
@@ -75,7 +75,8 @@ void main() {
     );
   });
 
-  testWidgets('loads as the push transition starts', (tester) async {
+  testWidgets('loads as the push starts and mounts the editor once the route '
+      'settles', (tester) async {
     late BuildContext home;
     await tester.pumpWidget(
       TestApp(
@@ -100,9 +101,9 @@ void main() {
             transition = ModalRoute.of(context)!.animation;
             return EditorPage(
               title: 'Editor',
-              load: () async {
+              load: () {
                 loads++;
-                return 'mode: rule';
+                return CodeForgeDocument.fromText('mode: rule');
               },
               onSave: (_, _, _) {},
             );
@@ -116,8 +117,109 @@ void main() {
     expect(transition!.status, AnimationStatus.forward);
     expect(loads, 1);
 
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(transition!.status, AnimationStatus.forward);
+    expect(find.byType(CodeForge), findsNothing);
+    expect(find.byType(ActivityIndicator), findsNothing);
+
     await settle(tester, 12);
     expect(find.byType(CodeForge), findsOneWidget);
+  });
+
+  testWidgets('an editor in a sheet grows the sheet before it scrolls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 860);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    late BuildContext home;
+    await tester.pumpWidget(
+      TestApp(
+        overrides: [
+          viewSizeProvider.overrideWithBuild((_, _) => const Size(400, 860)),
+        ],
+        child: Builder(
+          builder: (context) {
+            home = context;
+            return const SizedBox();
+          },
+        ),
+      ),
+    );
+    late BuildContext sheetPage;
+    unawaited(
+      showSheet<void>(
+        context: home,
+        props: nestedPagedSheetProps,
+        builder: (_) => NestedPagedSheet(
+          builder: (context) {
+            sheetPage = context;
+            return ListView(
+              primary: true,
+              children: [
+                for (var i = 0; i < 30; i++)
+                  SizedBox(height: 44, child: Text('$i')),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+    await settle(tester, 12);
+    unawaited(
+      Navigator.of(sheetPage).push(
+        PagedSheetRoute<void>(
+          builder: (_) => EditorPage(
+            title: 'Preview',
+            content: [for (var i = 0; i < 400; i++) 'key$i: $i'].join('\n'),
+          ),
+        ),
+      ),
+    );
+    await settle(tester, 30);
+    double sheetTop() => tester.getTopLeft(find.byType(PagedSheet)).dy;
+    double editorOffset() => tester
+        .stateList<ScrollableState>(
+          find.descendant(
+            of: find.byType(CodeForge),
+            matching: find.byWidgetPredicate((widget) => widget is Scrollable),
+          ),
+        )
+        .firstWhere((state) => state.position.axis == Axis.vertical)
+        .position
+        .pixels;
+    final collapsed = sheetTop();
+
+    // A trackpad pan scrolls without the press a touch selects with on the
+    // host, and the sheet measures what it fits only between frames.
+    Future<void> dragEditor(double dy) async {
+      final gesture = await tester.createGesture(
+        kind: PointerDeviceKind.trackpad,
+      );
+      await gesture.panZoomStart(tester.getCenter(find.byType(CodeForge)));
+      for (var moved = 10.0; moved <= dy.abs(); moved += 10) {
+        await gesture.panZoomUpdate(
+          tester.getCenter(find.byType(CodeForge)),
+          pan: Offset(0, moved * dy.sign),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pump(const Duration(milliseconds: 200));
+      await gesture.panZoomEnd();
+      await settle(tester, 30);
+    }
+
+    await dragEditor(-200);
+
+    expect(sheetTop(), lessThan(collapsed - 100));
+    expect(editorOffset(), 0);
+
+    await dragEditor(-100);
+
+    expect(editorOffset(), greaterThan(0));
   });
 
   Future<void> openCrlf(WidgetTester tester, {required bool loaded}) async {
@@ -136,6 +238,9 @@ void main() {
         ),
       ),
     );
+    final directory = Directory.systemTemp.createTempSync('editor_crlf');
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final file = File('${directory.path}/config.yaml')..writeAsStringSync(crlf);
     var confirms = 0;
     unawaited(
       BaseNavigator.push<void>(
@@ -143,7 +248,7 @@ void main() {
         EditorPage(
           title: 'Editor',
           content: loaded ? null : crlf,
-          load: loaded ? () async => crlf : null,
+          load: loaded ? () => openEditorFile(file.path) : null,
           onSave: (_, _, _) {},
           onPop: (_, _, _) async {
             confirms++;
@@ -241,6 +346,45 @@ void main() {
     expect(await canSaveAfter(6, 12, 'rule'), isFalse);
   });
 
+  testWidgets('an edit handed to the page opens to save, and undoes', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      TestApp(
+        overrides: [
+          viewSizeProvider.overrideWithBuild((_, _) => const Size(1200, 1000)),
+        ],
+        child: EditorPage(
+          title: 'Editor',
+          content: 'mode: rule',
+          edit: (text) => '$text\nipv6: true',
+          onSave: (_, _, _) {},
+        ),
+      ),
+    );
+    await settle(tester);
+    final controller = tester
+        .widget<CodeForge>(find.byType(CodeForge))
+        .controller;
+    bool canSave() =>
+        tester
+            .widget<IconButton>(
+              find.widgetWithGlyph(IconButton, AppGlyphs.check),
+            )
+            .onPressed !=
+        null;
+
+    expect(controller.text, 'mode: rule\nipv6: true');
+    expect(canSave(), isTrue);
+
+    await tester.tap(find.byGlyph(AppGlyphs.more));
+    await settle(tester, 8);
+    await tester.tap(find.byGlyph(AppGlyphs.undo));
+    await settle(tester, 12);
+    expect(controller.text, 'mode: rule');
+    expect(controller.isModified, isFalse);
+  });
+
   testWidgets('typing over the selection closes its context menu', (
     tester,
   ) async {
@@ -268,13 +412,13 @@ void main() {
       buttons: kSecondaryButton,
     );
     await settle(tester, 8);
-    expect(find.byType(CommonPopupMenu), findsOneWidget);
+    expect(find.byType(PopupMenu), findsOneWidget);
 
     await typeText(tester, controller, 'g');
     await settle(tester, 12);
 
     expect(controller.text, 'mode: g');
-    expect(find.byType(CommonPopupMenu), findsNothing);
+    expect(find.byType(PopupMenu), findsNothing);
   });
 
   Future<(CodeForgeController, List<String>)> pushSaving(
@@ -302,9 +446,13 @@ void main() {
         EditorPage(
           title: 'Editor',
           content: 'mode: rule',
-          onSave: (context, _, content) {
-            saved.add(content);
-            return (save ?? (context) => Navigator.of(context).pop())(context);
+          onSave: (context, _, content) async {
+            final FutureOr<void> Function(BuildContext) finish =
+                save ?? (context) => Navigator.of(context).pop();
+            saved.add(await content.readText());
+            if (context.mounted) {
+              await finish(context);
+            }
           },
         ),
       ),
@@ -362,7 +510,7 @@ void main() {
     );
     await settle(tester, 8);
     expect(saved, ['mode: rules']);
-    expect(find.byType(CommonPopupMenu), findsNothing);
+    expect(find.byType(PopupMenu), findsNothing);
 
     saving.complete();
     await settle(tester, 2);
@@ -381,7 +529,7 @@ void main() {
         child: EditorPage(
           title: 'Editor',
           titleEditable: true,
-          load: () => content.future,
+          load: () async => CodeForgeDocument.fromText(await content.future),
           onSave: (_, _, _) {},
         ),
       ),
@@ -405,12 +553,12 @@ void main() {
       buttons: kSecondaryButton,
     );
     await settle(tester, 8);
-    expect(find.byType(CommonPopupMenu), findsOneWidget);
+    expect(find.byType(PopupMenu), findsOneWidget);
 
     controller.focusNode!.unfocus();
     await settle(tester, 12);
 
-    expect(find.byType(CommonPopupMenu), findsNothing);
+    expect(find.byType(PopupMenu), findsNothing);
   });
 
   testWidgets('saving takes in the word still being composed', (tester) async {
@@ -451,7 +599,7 @@ void main() {
     await tester.tap(find.byGlyph(AppGlyphs.more));
     await settle(tester, 8);
     await tester.tap(find.byGlyph(AppGlyphs.undo));
-    await settle(tester, 8);
+    await settle(tester, 12);
 
     expect(controller.isComposingActive, isFalse);
     expect(controller.text, 'mode: rule');
@@ -468,7 +616,7 @@ void main() {
       buttons: kSecondaryButton,
     );
     await settle(tester, 8);
-    expect(find.byType(CommonPopupMenu), findsOneWidget);
+    expect(find.byType(PopupMenu), findsOneWidget);
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.keyS);

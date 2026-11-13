@@ -9,12 +9,13 @@ import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 const _profileId = 1;
 
@@ -135,6 +136,16 @@ void main() {
     expect(config().dns.ipv6, defaultDns.ipv6);
   });
 
+  testWidgets('offers Prefer H3 for every subscription', (tester) async {
+    await pumpView(tester);
+
+    await openAddSheet(tester);
+    await tester.tap(find.text('Prefer H3'));
+    await tester.pumpAndSettle();
+
+    expect(config().dnsOverrideKeys, {DnsOverrideKey.preferH3});
+  });
+
   testWidgets('the empty page says where the entries apply and adds from it', (
     tester,
   ) async {
@@ -185,7 +196,7 @@ void main() {
     await tester.tap(find.text(currentAppLocalizations.dnsMode));
     await tester.pumpAndSettle();
 
-    expect(find.byType(CommonPopupMenu), findsNothing);
+    expect(find.byType(PopupMenu), findsNothing);
     expect(config().dnsOverrideKeys, {DnsOverrideKey.enhancedMode});
     expect(config().dns.enhancedMode, defaultDns.enhancedMode);
     expect(defaultDns.enhancedMode, DnsMode.redirHost);
@@ -449,7 +460,11 @@ void main() {
       expect(editor.onSave, isNull);
 
       final context = tester.element(find.byType(EditorPage));
-      final popped = await editor.onPop!(context, 'DNS', 'listen: :53');
+      final popped = await editor.onPop!(
+        context,
+        'DNS',
+        const EditorContent.text('listen: :53'),
+      );
       expect(popped, isTrue);
       expect(overrides().dnsOverrideKeys, {DnsOverrideKey.listen});
       expect(overrides().dns.listen, ':53');
@@ -462,7 +477,12 @@ void main() {
       final editor = await openQuickEdit(tester);
       final context = tester.element(find.byType(EditorPage));
 
-      final popped = editor.onPop!(context, 'DNS', 'bogus: 1');
+      final popped = editor.onPop!(
+        context,
+        'DNS',
+        const EditorContent.text('bogus: 1'),
+      );
+      await tester.pump();
       await tester.pump();
       expect(
         find.textContaining(currentAppLocalizations.discardChanges),

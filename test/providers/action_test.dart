@@ -208,7 +208,7 @@ void main() {
 
     test('forwards a manual resource update to Core', () async {
       final core = _MockCoreHandlerInterface();
-      when(() => core.updateGeoData('MMDB')).thenAnswer((_) async => '');
+      when(() => core.updateGeoData('MMDB')).thenAnswer((_) async {});
       final container = ProviderContainer(
         overrides: [
           coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
@@ -262,6 +262,28 @@ void main() {
   });
 
   group('CoreAction', () {
+    test('reports a network change to the Core only while connected', () async {
+      final core = _MockCoreHandlerInterface();
+      when(core.reportNetworkChange).thenAnswer((_) async => true);
+      final container = ProviderContainer(
+        overrides: [
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+        ],
+      );
+      addTearDown(container.dispose);
+      final action = container.read(coreActionProvider.notifier);
+
+      await action.reportNetworkChange();
+      verifyNever(core.reportNetworkChange);
+
+      container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+      await action.reportNetworkChange();
+      verify(core.reportNetworkChange).called(1);
+
+      when(core.reportNetworkChange).thenThrow(StateError('disconnected'));
+      await expectLater(action.reportNetworkChange(), completes);
+    });
+
     test('applies the profile after restarting a stopped core', () async {
       final container = ProviderContainer(
         overrides: [

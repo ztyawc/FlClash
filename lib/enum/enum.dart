@@ -4,12 +4,10 @@ import 'dart:io';
 
 import 'package:fl_clash/common/context.dart';
 import 'package:fl_clash/common/system.dart';
-import 'package:fl_clash/ui/color.dart';
-import 'package:fl_clash/ui/icons/icons.dart';
-import 'package:fl_clash/ui/surface.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 enum SupportPlatform {
   Windows,
@@ -123,6 +121,21 @@ enum LogLevel { debug, info, warning, error, silent }
 
 enum RecordTone { neutral, warning, error }
 
+enum RecordFacetKind {
+  network,
+  rule,
+  mitm,
+  app,
+  proxy,
+  level,
+  type,
+  initiator,
+  cache,
+  rcode,
+}
+
+enum RecordGrouping { app, host, rule, exit }
+
 extension RecordToneExt on RecordTone {
   Color? accentColor(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -148,53 +161,6 @@ extension RecordToneExt on RecordTone {
       RecordTone.neutral => context.raisedSurfaceLevel.colorOf(colorScheme),
       RecordTone.warning => colorScheme.warningContainer,
       RecordTone.error => colorScheme.errorContainer,
-    };
-  }
-}
-
-enum MessageLevel { info, success, warning, error }
-
-extension MessageLevelExt on MessageLevel {
-  Glyph? get glyph {
-    return switch (this) {
-      MessageLevel.info => null,
-      MessageLevel.success => AppGlyphs.checkCircle,
-      MessageLevel.warning => AppGlyphs.warning,
-      MessageLevel.error => AppGlyphs.error,
-    };
-  }
-
-  Color containerColor(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return switch (this) {
-      MessageLevel.error => colorScheme.errorContainer,
-      _ => SurfaceLevel.floatingOf(colorScheme).colorOf(colorScheme),
-    };
-  }
-
-  Color contentColor(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return switch (this) {
-      MessageLevel.error => colorScheme.onErrorContainer,
-      _ => colorScheme.onSurfaceVariant,
-    };
-  }
-
-  Color iconColor(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return switch (this) {
-      MessageLevel.info => colorScheme.onSurfaceVariant,
-      MessageLevel.success => colorScheme.success,
-      MessageLevel.warning => colorScheme.warning,
-      MessageLevel.error => colorScheme.onErrorContainer,
-    };
-  }
-
-  Duration get duration {
-    return switch (this) {
-      MessageLevel.info || MessageLevel.success => const Duration(seconds: 3),
-      MessageLevel.warning => const Duration(seconds: 5),
-      MessageLevel.error => const Duration(seconds: 6),
     };
   }
 }
@@ -315,6 +281,7 @@ enum DnsOverrideKey with OverrideKey {
   static const normalProfileKeys = {
     listen,
     ipv6,
+    preferH3,
     enhancedMode,
     fakeIpFilter,
     fakeIpFilterMode,
@@ -384,6 +351,22 @@ enum TunOverrideKey with OverrideKey {
   excludeDstPort('exclude-dst-port');
 
   const TunOverrideKey(this.path);
+
+  @override
+  final String path;
+}
+
+/// Top-level profile keys, except `test-url`: the Core takes that one apart
+/// as the URL of every group and provider that names none.
+@JsonEnum(valueField: 'path')
+enum GeneralOverrideKey with OverrideKey {
+  testUrl('test-url'),
+  unifiedDelay('unified-delay'),
+  tcpConcurrent('tcp-concurrent'),
+  ipv6('ipv6'),
+  geodataLoader('geodata-loader');
+
+  const GeneralOverrideKey(this.path);
 
   @override
   final String path;
@@ -461,6 +444,7 @@ enum FunctionTag {
   coreErrorNotifier,
   dialerLoopNotifier,
   reloadPackages,
+  networkChange,
 }
 
 enum DashboardWidget {
@@ -546,7 +530,6 @@ enum PageLabel {
   logs,
   requests,
   resources,
-  connections,
   dns,
 }
 
@@ -682,7 +665,7 @@ extension RuleActionExt on RuleAction {
   }
 }
 
-enum ProxyFieldKind { text, secret, number, toggle, choice, list }
+enum ProxyFieldKind { text, secret, number, toggle, choice, list, map }
 
 /// A key of a proxy definition the form edits, at [path] since the core reads
 /// transport, TLS and plugin settings from maps of their own.
@@ -714,9 +697,27 @@ enum ProxyField {
   flow(['flow'], ProxyFieldKind.choice),
   wsPath(['ws-opts', 'path']),
   wsHost(['ws-opts', 'headers', 'Host']),
+  wsHeaders(['ws-opts', 'headers'], ProxyFieldKind.map),
+  wsMaxEarlyData(['ws-opts', 'max-early-data'], ProxyFieldKind.number),
+  wsEarlyDataHeaderName(['ws-opts', 'early-data-header-name']),
+  wsHttpUpgrade(['ws-opts', 'v2ray-http-upgrade'], ProxyFieldKind.toggle),
+  wsHttpUpgradeFastOpen([
+    'ws-opts',
+    'v2ray-http-upgrade-fast-open',
+  ], ProxyFieldKind.toggle),
+  httpMethod(['http-opts', 'method']),
+  httpPath(['http-opts', 'path'], ProxyFieldKind.list),
+  httpHost(['http-opts', 'headers', 'Host'], ProxyFieldKind.list),
+  httpHeaders(['http-opts', 'headers'], ProxyFieldKind.map),
+  h2Host(['h2-opts', 'host'], ProxyFieldKind.list),
+  h2Path(['h2-opts', 'path']),
   grpcServiceName(['grpc-opts', 'grpc-service-name']),
   xhttpPath(['xhttp-opts', 'path']),
   xhttpHost(['xhttp-opts', 'host']),
+  mkcpSeed(['mkcp-opts', 'seed'], ProxyFieldKind.secret),
+  mkcpHeader(['mkcp-opts', 'header'], ProxyFieldKind.choice),
+  mekyaUrl(['mekya-opts', 'url']),
+  headers(['headers'], ProxyFieldKind.map),
   tls(['tls'], ProxyFieldKind.toggle),
   sni(['sni']),
   servername(['servername']),
@@ -728,6 +729,20 @@ enum ProxyField {
   plugin(['plugin'], ProxyFieldKind.choice),
   pluginMode(['plugin-opts', 'mode']),
   pluginHost(['plugin-opts', 'host']),
+  pluginPath(['plugin-opts', 'path']),
+  pluginUsername(['plugin-opts', 'username']),
+  pluginPassword(['plugin-opts', 'password'], ProxyFieldKind.secret),
+  pluginVersion(['plugin-opts', 'version'], ProxyFieldKind.number),
+  pluginVersionHint(['plugin-opts', 'version-hint'], ProxyFieldKind.choice),
+  pluginRestlsScript(['plugin-opts', 'restls-script']),
+  pluginKey(['plugin-opts', 'key'], ProxyFieldKind.secret),
+  pluginCrypt(['plugin-opts', 'crypt'], ProxyFieldKind.choice),
+  pluginTls(['plugin-opts', 'tls'], ProxyFieldKind.toggle),
+  pluginMux(['plugin-opts', 'mux'], ProxyFieldKind.toggle),
+  pluginSkipCertVerify([
+    'plugin-opts',
+    'skip-cert-verify',
+  ], ProxyFieldKind.toggle),
   udpOverTcp(['udp-over-tcp'], ProxyFieldKind.toggle),
   protocolParam(['protocol-param']),
   obfsParam(['obfs-param']),
@@ -814,7 +829,7 @@ enum TabAnimation { slide, fade }
 
 enum LiquidGlassMode { none, standard, ultra }
 
-enum Language { yaml, javaScript, json }
+enum Language { yaml, javaScript, json, ini, xml, text }
 
 enum ScrollPositionCacheKey { proxiesTabList }
 
@@ -829,8 +844,29 @@ enum LoadingTag {
   access,
   proxies,
   checkUpdate,
+  mitm,
 }
 
+/// The lists of `Mitm`, named by the Core's JSON keys.
+enum MitmList {
+  hostname('hostname'),
+  urlRewrite('url-rewrite'),
+  headerRewrite('header-rewrite'),
+  bodyRewrite('body-rewrite'),
+  mapLocal('map-local'),
+  script('script');
+
+  final String key;
+
+  const MitmList(this.key);
+}
+
+enum MitmTrust { notGenerated, notInstalled, untrusted, ready }
+
+enum MitmInstallOutcome { installed, untilReboot, prompted, saved }
+
 enum CoreStatus { connecting, connected, disconnected }
+
+enum RequestFeed { recent, live }
 
 enum UpdatingScope { core, local }

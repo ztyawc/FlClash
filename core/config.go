@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/adapter/inbound"
+	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/component/age"
 	"github.com/metacubex/mihomo/component/auth"
 	"github.com/metacubex/mihomo/component/dialer"
@@ -34,25 +34,6 @@ var (
 	errNotInitialized   = errors.New("not initialized")
 )
 
-func defaultSetupParams() *SetupParams {
-	return &SetupParams{
-		TestURL:     defaultTestURL,
-		SelectedMap: map[string]string{},
-	}
-}
-
-// A missing test-url means the built-in probe, while an empty one keeps the
-// URL already in force, so the defaults have to be in place before the decode.
-func (params *SetupParams) UnmarshalJSON(data []byte) error {
-	type wire SetupParams
-	decoded := wire(*defaultSetupParams())
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*params = SetupParams(decoded)
-	return nil
-}
-
 var setupConfig = applyConfig
 
 func handleSetupConfig(params *SetupParams) error {
@@ -62,7 +43,11 @@ func handleSetupConfig(params *SetupParams) error {
 	return setupConfig(params)
 }
 
-func handleGetConfig(path string) (*config.RawConfig, error) {
+func handleReadConfig(params PathParams) (*config.RawConfig, error) {
+	return readRawConfig(params.Path)
+}
+
+func readRawConfig(path string) (*config.RawConfig, error) {
 	defer scheduleLoadMemoryRelease()
 	buf, err := os.ReadFile(path)
 	if err != nil {
@@ -71,9 +56,36 @@ func handleGetConfig(path string) (*config.RawConfig, error) {
 	return unmarshalRawConfig(buf)
 }
 
-func handleValidateConfig(path string) error {
-	_, err := handleGetConfig(path)
-	return err
+func handleGetProxyDefinition(params NameParams) (map[string]any, error) {
+	name := params.Name
+	raw, err := readRawConfig(runningConfigPath())
+	if err != nil {
+		return nil, err
+	}
+	if proxy := lookupProxy(name); proxy != nil {
+		if pdName := proxy.ProxyInfo().ProviderName; pdName != "" {
+			pd, running := tunnel.ProvidersSnapshot()[pdName]
+			mapping, declared := raw.ProxyProvider[pdName]
+			if !running || !declared {
+				return nil, nil
+			}
+			return provider.ProxyMapping(pd, mapping, name)
+		}
+	}
+	for _, mapping := range raw.Proxy {
+		if mapping["name"] == name {
+			return mapping, nil
+		}
+	}
+	return nil, nil
+}
+
+func handleValidateConfig(params PathParams) *string {
+	if _, err := readRawConfig(params.Path); err != nil {
+		message := err.Error()
+		return &message
+	}
+	return nil
 }
 
 func handleDecryptConfig(params DecryptConfigParams) (string, error) {
@@ -112,8 +124,12 @@ func withPlatformLimits(cfg *config.Config) *config.Config {
 	return cfg
 }
 
+func runningConfigPath() string {
+	return filepath.Join(constant.Path.HomeDir(), "config.yaml")
+}
+
 func loadSetupConfig(params *SetupParams) (*config.Config, error) {
-	path := filepath.Join(constant.Path.HomeDir(), "config.yaml")
+	path := runningConfigPath()
 	if params.Base != nil {
 		return loadConfigWithBase(params.Base, path)
 	}
@@ -125,8 +141,7 @@ func applyConfig(params *SetupParams) error {
 	configMu.Lock()
 	defer configMu.Unlock()
 
-	setTestURL(params.TestURL)
-	skipCertVerify.Store(params.SkipCertVerify)
+	applyOptions(params.Options)
 	cfg, err := loadSetupConfig(params)
 	if err != nil {
 		// The fallback is what keeps the listeners serving while the host
@@ -152,7 +167,11 @@ func applyConfig(params *SetupParams) error {
 	updateListeners(cfg)
 	reconcileGeoUpdater()
 	scheduleLoadMemoryRelease()
-	return err
+	if err != nil {
+		// The host tells this apart from a call that failed: the default config runs.
+		return &MethodError{Code: "config_rejected", Message: err.Error()}
+	}
+	return nil
 }
 
 func updateConfig(params *UpdateParams) error {
@@ -181,10 +200,11 @@ func updateConfig(params *UpdateParams) error {
 		general.UnifiedDelay = *params.UnifiedDelay
 		adapter.UnifiedDelay.Store(general.UnifiedDelay)
 	}
-	// IPv6 belongs with mode: turning it on moves a direct dial to another exit address.
-	routeChanged := false
+	routeChange := routeUnchanged
 	if params.Mode != nil {
-		routeChanged = routeChanged || general.Mode != *params.Mode
+		if general.Mode != *params.Mode {
+			routeChange = routeMoved
+		}
 		general.Mode = *params.Mode
 		tunnel.SetMode(general.Mode)
 	}
@@ -192,8 +212,12 @@ func updateConfig(params *UpdateParams) error {
 		general.LogLevel = *params.LogLevel
 		log.SetLevel(general.LogLevel)
 	}
+	// Turning IPv6 on moves a direct dial to another exit address while the
+	// route it takes stays the same.
 	if params.IPv6 != nil {
-		routeChanged = routeChanged || general.IPv6 != *params.IPv6
+		if general.IPv6 != *params.IPv6 {
+			routeChange = routeReset
+		}
 		general.IPv6 = *params.IPv6
 		resolver.DisableIPv6 = !general.IPv6
 	}
@@ -204,8 +228,8 @@ func updateConfig(params *UpdateParams) error {
 	if params.Authentication != nil {
 		applyAuthentication(currentConfig, *params.Authentication)
 	}
-	if params.SkipCertVerify != nil {
-		skipCertVerify.Store(*params.SkipCertVerify)
+	if params.Options != nil {
+		applyOptions(*params.Options)
 	}
 
 	updateListeners(currentConfig)
@@ -213,10 +237,16 @@ func updateConfig(params *UpdateParams) error {
 		setGeoResourceUrl(geoType, link)
 	}
 	syncGeoUpdater(params.GeoAutoUpdate, params.GeoUpdateInterval)
-	if routeChanged {
-		bumpRouteEpoch()
+	if routeChange != routeUnchanged {
+		changeRoute(routeChange)
 	}
 	return nil
+}
+
+func applyOptions(options CoreOptions) {
+	setTestURL(options.TestURL)
+	provider.SetDefaultTestTimeout(timeoutFromMillis(options.DelayTestTimeout, 0))
+	skipCertVerify.Store(options.SkipCertVerify)
 }
 
 func patchTun(target *LC.Tun, params *tunSchema) {

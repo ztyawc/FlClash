@@ -3,7 +3,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 
 import 'form_row.dart';
 
@@ -59,10 +59,9 @@ extension CustomIssuesExt on Iterable<CustomIssue> {
 }
 
 Future<void> showSaveBlocked(BuildContext context, String reason) {
-  return dialogs.showMessage(
+  return dialogs.showAlert(
     title: context.appLocalizations.cannotSave,
     message: TextSpan(text: reason),
-    cancelable: false,
   );
 }
 
@@ -99,13 +98,14 @@ class SliverCustomIssuesBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     return PinnedHeaderSliver(
       child: Padding(
-        padding: EdgeInsets.fromLTRB(16, context.contentTopPadding, 16, 0),
+        padding: EdgeInsets.fromLTRB(16, context.sectionsTopPadding, 16, 0),
         child: CustomIssuesBanner(issues: issues),
       ),
     );
   }
 }
 
+/// Opens a page of sections, keeping the gap above it that they keep.
 class ErrorBanner extends StatelessWidget {
   final String? message;
 
@@ -147,7 +147,10 @@ class _Banner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: EdgeInsets.only(
+        top: listHeaderPaddingOf(context).top,
+        bottom: 16,
+      ),
       padding: const EdgeInsets.all(16),
       decoration: ShapeDecoration(color: color, shape: AppShape.xl),
       child: Row(

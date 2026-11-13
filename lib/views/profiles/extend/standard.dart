@@ -6,7 +6,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/config/rules.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class StandardContent extends ConsumerStatefulWidget {
@@ -93,7 +93,7 @@ class _StandardContentState extends ConsumerState<StandardContent> {
 
   Widget _buildRuleItem(List<Rule> rules, int index, Set<dynamic> selected) {
     final rule = rules[index];
-    return ReorderableDelayedDragStartListener(
+    return ReorderDragStartListener(
       key: ObjectKey(rule),
       index: index,
       child: ItemPositionProvider(
@@ -123,7 +123,7 @@ class _StandardContentState extends ConsumerState<StandardContent> {
     _profileId = ProfileIdProvider.of(context)!.profileId;
     final addedRules = ref.watch(profileRulesProvider(_profileId)).value ?? [];
     final selectedRules = ref.watch(itemsProvider(_key));
-    return CommonPopScope(
+    return PopGuard(
       onPop: selectedRules.isEmpty
           ? null
           : (_) {
@@ -132,47 +132,40 @@ class _StandardContentState extends ConsumerState<StandardContent> {
             },
       child: SliverMainAxisGroup(
         slivers: [
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
           SliverToBoxAdapter(
-            child: Column(
-              children: [
-                ListHeader(
-                  title: appLocalizations.addedRules,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 16.mAp(context),
-                    vertical: 8.mAp(context),
-                  ),
-                  actions: [
-                    if (selectedRules.isNotEmpty) ...[
-                      IconButtonData(
-                        glyph: AppGlyphs.delete,
-                        tooltip: appLocalizations.delete,
-                        onPressed: _handleDelete,
-                      ),
-                      IconButtonData(
-                        glyph: AppGlyphs.selectAll,
-                        tooltip: appLocalizations.selectAll,
-                        onPressed: _handleSelectAll,
-                      ),
-                    ] else ...[
-                      IconButtonData(
-                        glyph: AppGlyphs.rulePresets,
-                        tooltip: appLocalizations.quickActions,
-                        onPressed: _handleQuickActions,
-                      ),
-                      IconButtonData(
-                        glyph: AppGlyphs.addCircle,
-                        tooltip: appLocalizations.add,
-                        onPressed: _handleAddOrUpdate,
-                      ),
-                    ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: ListHeader(
+                title: appLocalizations.addedRules,
+                actions: [
+                  if (selectedRules.isNotEmpty) ...[
+                    IconButtonData(
+                      glyph: AppGlyphs.delete,
+                      tooltip: appLocalizations.delete,
+                      onPressed: _handleDelete,
+                    ),
+                    IconButtonData(
+                      glyph: AppGlyphs.selectAll,
+                      tooltip: appLocalizations.selectAll,
+                      onPressed: _handleSelectAll,
+                    ),
+                  ] else ...[
+                    IconButtonData(
+                      glyph: AppGlyphs.rulePresets,
+                      tooltip: appLocalizations.quickActions,
+                      onPressed: _handleQuickActions,
+                    ),
+                    IconButtonData(
+                      glyph: AppGlyphs.addCircle,
+                      tooltip: appLocalizations.add,
+                      onPressed: _handleAddOrUpdate,
+                    ),
                   ],
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-          const SliverToBoxAdapter(child: SizedBox(height: 8)),
-          SliverReorderableList(
+          SliverPrismReorderableList(
             itemCount: addedRules.length,
             itemBuilder: (_, index) =>
                 _buildRuleItem(addedRules, index, selectedRules),
@@ -339,7 +332,7 @@ class _EditGlobalAddedRulesState extends ConsumerState<_EditGlobalAddedRules> {
     final rules = (rulesState.value ?? [])
         .whereMatches(_query, (rule) => rule.searchFields, texts: _searchTexts)
         .toList();
-    return CommonScaffold(
+    return Scaffold(
       title: appLocalizations.editGlobalRules,
       searchState: AppBarSearchState(onSearch: _handleSearch),
       body: NullStatusSwitcher(
@@ -391,7 +384,7 @@ class _EditGlobalAddedRulesState extends ConsumerState<_EditGlobalAddedRules> {
                   ),
                 ),
                 SliverToBoxAdapter(
-                  child: SizedBox(height: 12 + BottomInsetScope.of(context)),
+                  child: SizedBox(height: 12 + context.bottomInset),
                 ),
               ],
             ),

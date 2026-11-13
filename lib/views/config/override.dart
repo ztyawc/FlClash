@@ -9,7 +9,7 @@ import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 typedef OverrideState<K extends OverrideKey, M> = ({M model, Set<K> keys});
@@ -298,10 +298,12 @@ class TextOverrideField<M> extends ValueOverrideField<M, String> {
     super.update, {
     required this.maxLength,
     this.validator,
+    this.allowEmpty = true,
   });
 
   final int maxLength;
   final ConfigValidator? validator;
+  final bool allowEmpty;
 
   @override
   Widget build(
@@ -317,7 +319,7 @@ class TextOverrideField<M> extends ValueOverrideField<M, String> {
       maxLength: maxLength,
       normalize: (value) => value.trim(),
       validator: validator,
-      allowEmpty: true,
+      allowEmpty: allowEmpty,
     );
   }
 }
@@ -328,10 +330,14 @@ class ListOverrideField<M> extends ValueOverrideField<M, List<String>> {
     super.update, {
     required this.itemMaxLength,
     this.itemValidator,
+    this.description,
   });
 
   final int itemMaxLength;
   final ConfigValidator? itemValidator;
+
+  /// Shown on the list's own page, so long lists do not crowd the section.
+  final ConfigLabel? description;
 
   @override
   Widget build(
@@ -346,6 +352,7 @@ class ListOverrideField<M> extends ValueOverrideField<M, List<String>> {
       onChanged: model.modelWriter(update),
       itemMaxLength: itemMaxLength,
       itemValidator: itemValidator,
+      description: description,
     );
   }
 }
@@ -470,13 +477,13 @@ class OverrideView<K extends OverrideKey, M> extends ConsumerWidget {
       content: raw,
       schema: quickEdit.schema,
       readOnly: false,
-      onPop: (_, _, content) =>
-          _handleQuickEditPop(ref, quickEdit, content, raw),
+      onPop: (_, _, content) async =>
+          _handleQuickEditPop(ref, quickEdit, await content.readText(), raw),
     );
     return sheetNavigatorOf(context).push(
       context.isMobileView
-          ? CommonRoute(builder: (_) => page)
-          : CommonDesktopRoute(builder: (_) => page),
+          ? CardPageRoute(builder: (_) => page)
+          : FadePageRoute(builder: (_) => page),
     );
   }
 
@@ -536,7 +543,7 @@ class OverrideView<K extends OverrideKey, M> extends ConsumerWidget {
       ),
     );
     final addEntry = target.addEntry(appLocalizations);
-    return CommonScaffold(
+    return Scaffold(
       title: spec.title(appLocalizations),
       iconActions: [
         if (!isEmpty)
@@ -582,9 +589,10 @@ class _OverrideList<K extends OverrideKey, M> extends ConsumerWidget {
     final keys = ref.watch(spec.target.select((state) => state.keys));
     final entries = spec.values.where(keys.contains);
     return ListView(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 16,
-      ).copyWith(top: context.contentTopPadding, bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16).copyWith(
+        top: context.sectionsTopPadding,
+        bottom: 16 + context.bottomInset,
+      ),
       children: [
         if (spec.target.issues case final issues?)
           CustomIssuesBanner(issues: ref.watch(issues)),
@@ -616,6 +624,55 @@ class _OverrideList<K extends OverrideKey, M> extends ConsumerWidget {
           child: ListFooter(text: spec.target.description(appLocalizations)),
         ),
       ],
+    );
+  }
+}
+
+class OverrideSection<K extends OverrideKey, M> extends ConsumerWidget {
+  const OverrideSection({
+    super.key,
+    required this.title,
+    required this.spec,
+    this.items = const [],
+    this.footer = const [],
+  });
+
+  final String title;
+  final OverrideSpec<K, M> spec;
+
+  /// Keyed, since the section animates its rows in and out.
+  final List<Widget> items;
+  final List<String> footer;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final appLocalizations = context.appLocalizations;
+    final picked = ref.watch(spec.target.select((state) => state.keys));
+    final listed = [
+      for (final key in spec.values)
+        if (picked.contains(key)) key,
+    ];
+    void handleAdd() => showOverrideAddSheet(context, ref, spec);
+    return generateAnimatedSection(
+      title: title,
+      items: [
+        ...items,
+        for (final key in listed)
+          OverrideEntry(key: ValueKey(key), spec: spec, overrideKey: key),
+        if (listed.length < spec.values.length)
+          FormRow(
+            key: const ValueKey(#add),
+            leading: EntryButton.add(onPressed: handleAdd),
+            title: spec.target.addEntry(appLocalizations),
+            titleStyle: TextStyle(color: context.colorScheme.primary),
+            onPressed: handleAdd,
+          ),
+      ],
+      footer: [
+        ...footer,
+        spec.target.description(appLocalizations),
+        ?spec.footerOf(listed, appLocalizations),
+      ].join('\n'),
     );
   }
 }

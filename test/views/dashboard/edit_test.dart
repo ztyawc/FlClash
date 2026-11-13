@@ -6,12 +6,13 @@ import 'package:fl_clash/views/dashboard/edit.dart';
 import 'package:fl_clash/views/dashboard/widgets/widgets.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 
 import '../../helpers/test_app.dart';
 import '../../helpers/test_profiles.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 void main() {
   late ProviderContainer container;
@@ -129,8 +130,7 @@ void main() {
     await pumpEditor(tester);
 
     final removeBadges = find.byWidgetPredicate(
-      (widget) =>
-          widget is Tooltip && (widget.message?.startsWith('Remove ') ?? false),
+      (widget) => widget is Tooltip && widget.message.startsWith('Remove '),
     );
     expect(removeBadges, findsNWidgets(2));
     expect(find.byTooltip('Remove Network speed'), findsOneWidget);
@@ -303,6 +303,17 @@ void main() {
     await teardown(tester);
   });
 
+  testWidgets('editing leaves done as the only way out in the bar', (
+    tester,
+  ) async {
+    await pumpEditor(tester);
+
+    expect(find.byTooltip('Done'), findsOneWidget);
+    expect(find.byTooltip('Back'), findsNothing);
+
+    await teardown(tester);
+  });
+
   testWidgets('editing keeps the cards where they stood, state and all', (
     tester,
   ) async {
@@ -367,7 +378,7 @@ void main() {
   });
 
   testWidgets('a narrow desktop window edits its cards in the card column, '
-      'dragged at once', (tester) async {
+      'held and dragged with a mouse too', (tester) async {
     seed(const [
       DashboardWidget.currentOutbound,
       DashboardWidget.networkTakeover,
@@ -392,6 +403,7 @@ void main() {
       tester.getCenter(card),
       kind: PointerDeviceKind.mouse,
     );
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
     for (var step = 0; step < 4; step++) {
       await gesture.moveBy(Offset(0, -rise / 4));
       await tester.pump(const Duration(milliseconds: 100));

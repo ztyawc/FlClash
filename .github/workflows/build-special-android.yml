@@ -146,7 +146,7 @@ jobs:
 
       - name: Test CN2 protocols
         working-directory: core/Clash.Meta
-        run: go test -count=1 -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+        run: go test -count=1 -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
 
       - name: Analyze
         run: flutter analyze --no-fatal-infos
@@ -227,6 +227,7 @@ jobs:
             printf -- '- FlClash：`%s`\n' "$commit_sha"
             printf -- '- mihomo-cn2 内核：`%s`\n' "$core_sha"
             printf -- '- 内核来源：ztyawc/mihomo-cn2，包含 FlClash 接口适配\n'
+            printf -- '- 魔改协议：VK S6、UU SNI、QyProxy、CMCC SOCKS5\n'
             printf -- '- 签名：固定发布证书（RSA 3072）\n'
             printf -- '- 证书 SHA-256：`%s`\n\n' "$(cat dist/SIGNING_CERTIFICATE_SHA256)"
             printf '从临时 debug 签名版本切换时，请先导出配置再卸载旧版；此后的固定签名版本可覆盖更新。\n'

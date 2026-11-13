@@ -5,7 +5,6 @@ import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/manager/core_manager.dart';
-import 'package:fl_clash/manager/status_manager.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/app.dart';
@@ -16,14 +15,16 @@ import 'package:fl_clash/providers/route_state.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/ui.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../helpers/app_paths.dart';
+import '../helpers/test_database_providers.dart';
 import '../helpers/test_profiles.dart';
+import '../helpers/test_app.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
@@ -60,6 +61,10 @@ CoreEvent _geoUpdate({
 class _ApplyRecordingSetupAction extends SetupAction {
   int updates = 0;
   int applies = 0;
+  int globalRulesApplies = 0;
+
+  @override
+  void applyIfGlobalRulesUsed() => globalRulesApplies++;
 
   @override
   Future<void> updateConfigDebounce() async {
@@ -74,8 +79,8 @@ class _ApplyRecordingSetupAction extends SetupAction {
 
 _MockCoreHandlerInterface _coreInterface() {
   final coreInterface = _MockCoreHandlerInterface();
-  when(() => coreInterface.startLog()).thenAnswer((_) {});
-  when(() => coreInterface.stopLog()).thenAnswer((_) {});
+  when(() => coreInterface.startLog()).thenAnswer((_) async {});
+  when(() => coreInterface.stopLog()).thenAnswer((_) async {});
   return coreInterface;
 }
 
@@ -96,13 +101,11 @@ Future<ProviderContainer> _pumpCoreManager(
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(
+      child: HostApp(
         navigatorKey: globalState.navigatorKey,
-        localizationsDelegates: const [AppLocalizations.delegate],
-        supportedLocales: AppLocalizations.delegate.supportedLocales,
         builder: (context, child) {
           globalState.measure = Measure.of(context, 1);
-          return StatusManager(child: child!);
+          return BannerHost(stacked: false, topInset: 0, child: child!);
         },
         home: const CoreManager(child: SizedBox()),
       ),
@@ -139,7 +142,12 @@ void main() {
   late Directory profileSwitchTempDir;
 
   setUpAll(() async {
-    registerFallbackValue(const SetupParams(selectedMap: {}, testUrl: ''));
+    registerFallbackValue(
+      const SetupParams(
+        selectedMap: {},
+        options: CoreOptions(testUrl: ''),
+      ),
+    );
     await AppLocalizations.load(const Locale('en'));
     profileSwitchTempDir = Directory.systemTemp.createTempSync(
       'core_manager_test',
@@ -157,7 +165,7 @@ void main() {
     tester,
   ) async {
     final coreInterface = _MockCoreHandlerInterface();
-    when(() => coreInterface.stopLog()).thenAnswer((_) {});
+    when(() => coreInterface.stopLog()).thenAnswer((_) async {});
     final container = ProviderContainer(
       overrides: [
         coreHandlerProvider.overrideWithValue(
@@ -169,7 +177,7 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MaterialApp(home: CoreManager(child: SizedBox())),
+        child: const HostApp(home: CoreManager(child: SizedBox())),
       ),
     );
     container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
@@ -341,6 +349,50 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('a test URL change reaches the Core as an update, without an '
+      'apply', (tester) async {
+    final setupAction = _ApplyRecordingSetupAction();
+    final container = await _pumpCoreManager(
+      tester,
+      _coreInterface(),
+      overrides: [setupActionProvider.overrideWith(() => setupAction)],
+    );
+
+    container
+        .read(patchClashConfigProvider.notifier)
+        .update((state) => state.copyWith(testUrl: 'https://probe.test/204'));
+    await tester.pump();
+
+    expect(setupAction.updates, 1);
+    expect(setupAction.applies, 0);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a change to the global added rules, not their first load, '
+      'asks for an apply', (tester) async {
+    final setupAction = _ApplyRecordingSetupAction();
+    final container = await _pumpCoreManager(
+      tester,
+      _coreInterface(),
+      overrides: [
+        setupActionProvider.overrideWith(() => setupAction),
+        globalRulesProvider.overrideWith(() => TestGlobalRules()),
+      ],
+    );
+    await tester.pump();
+    expect(setupAction.globalRulesApplies, 0);
+
+    container.read(globalRulesProvider.notifier).value = [
+      const Rule(id: 1, content: 'a.test', ruleTarget: 'DIRECT'),
+    ];
+    await tester.pump();
+
+    expect(setupAction.globalRulesApplies, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('core logs are recorded for the logs view', (tester) async {
     final coreInterface = _coreInterface();
     final container = await _pumpCoreManager(tester, coreInterface);
@@ -423,19 +475,14 @@ void main() {
     coreEventManager.sendEvent(
       const CoreEvent(
         type: CoreEventType.routeChanged,
-        data: {
-          'core-epoch': 7,
-          'picks-version': 42,
-          'picks': {'Proxy': 'HK-01'},
-        },
+        data: {'core-epoch': 7, 'route-version': 42},
       ),
     );
     await tester.pump();
 
     final route = container.read(routeTrackerProvider);
     expect(route.coreEpoch, 7);
-    expect(route.picksVersion, 42);
-    expect(route.picks, {'Proxy': 'HK-01'});
+    expect(route.routeVersion, 42);
     expect(route.synced, isTrue);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -482,7 +529,10 @@ void main() {
       var setupCalls = 0;
       when(() => coreInterface.setupConfig(any())).thenAnswer((_) async {
         setupCalls++;
-        return 'rejected';
+        throw const CoreMethodException(
+          code: 'config_rejected',
+          message: 'rejected',
+        );
       });
       final container = await _pumpCoreManager(
         tester,
@@ -507,7 +557,10 @@ void main() {
       var setupCalls = 0;
       when(() => coreInterface.setupConfig(any())).thenAnswer((_) async {
         setupCalls++;
-        return 'rejected';
+        throw const CoreMethodException(
+          code: 'config_rejected',
+          message: 'rejected',
+        );
       });
       final a = Profile.normal(label: 'a');
       final b = Profile.normal(label: 'b');
@@ -542,7 +595,10 @@ void main() {
         var setupCalls = 0;
         when(() => coreInterface.setupConfig(any())).thenAnswer((_) async {
           setupCalls++;
-          return 'rejected';
+          throw const CoreMethodException(
+            code: 'config_rejected',
+            message: 'rejected',
+          );
         });
         const missingId = -1;
         final container = await _pumpCoreManager(

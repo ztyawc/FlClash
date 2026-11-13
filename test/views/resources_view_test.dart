@@ -11,7 +11,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/resources.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/services.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' hide context;
@@ -21,8 +21,14 @@ import '../helpers/context_menu.dart';
 import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_database_providers.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 void main() {
+  setUp(() {
+    mitmFeature = true;
+    addTearDown(() => mitmFeature = false);
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late Directory home;
@@ -50,6 +56,7 @@ void main() {
     List<IconSet> iconSets = const [],
     List<ClashProvider> ruleProviders = const [],
     List<Script> scripts = const [],
+    List<MitmModule> modules = const [],
   }) {
     final container = ProviderContainer(
       overrides: [
@@ -58,6 +65,7 @@ void main() {
           () => TestClashProviders(ruleProviders),
         ),
         scriptsProvider.overrideWith(() => TestScripts(scripts)),
+        mitmModulesProvider.overrideWith(() => TestMitmModules(modules)),
       ],
     );
     addTearDown(container.dispose);
@@ -74,6 +82,32 @@ void main() {
     }
     fail('timed out waiting for $finder');
   }
+
+  testWidgets('only a subscribed module is listed among the resources', (
+    tester,
+  ) async {
+    final date = DateTime(2026);
+    final container = createContainer(
+      modules: [
+        MitmModule(
+          id: 1,
+          name: 'Subscribed',
+          url: 'https://example.com/a.sgmodule',
+          lastUpdateTime: date,
+        ),
+        MitmModule(id: 2, name: 'Written here', lastUpdateTime: date),
+      ],
+    );
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(child: ResourcesView()),
+      ),
+    );
+    await pumpUntilFound(tester, find.text('Subscribed'));
+
+    expect(find.text('Written here'), findsNothing);
+  });
 
   testWidgets('a geo row opens its link editor without a per-row action', (
     tester,
@@ -97,16 +131,25 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text(currentAppLocalizations.geoResources), findsOneWidget);
-    expect(find.byType(DecorationListItem), findsNWidgets(4));
-    expect(find.byType(ItemPositionProvider), findsNWidgets(4));
-    expect(find.byType(Switch), findsNothing);
-    expect(
-      find.descendant(
-        of: find.byType(DecorationListItem),
-        matching: find.byGlyph(AppGlyphs.more),
-      ),
-      findsNothing,
-    );
+    for (final type in GeoResource.values) {
+      final row = find.ancestor(
+        of: find.text(type.name),
+        matching: find.byType(DecorationListItem),
+      );
+      expect(row, findsOneWidget);
+      expect(
+        find.ancestor(of: row, matching: find.byType(ItemPositionProvider)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.byType(Switch)),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: row, matching: find.byGlyph(AppGlyphs.more)),
+        findsNothing,
+      );
+    }
     expect(find.byType(FutureBuilder<FileInfo?>), findsNWidgets(4));
     for (final url in defaultGeoXUrl.values) {
       expect(find.text(url), findsNothing);
@@ -127,7 +170,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('the bar menu switches auto update and sets its interval', (
+  testWidgets('a switch row turns auto update on and reveals its interval', (
     tester,
   ) async {
     const size = Size(1000, 1000);
@@ -145,34 +188,35 @@ void main() {
         child: const TestApp(child: ResourcesView()),
       ),
     );
+    final l10n = currentAppLocalizations;
+    await pumpUntilFound(tester, find.text(l10n.autoUpdate));
     await tester.pumpAndSettle();
 
-    final l10n = currentAppLocalizations;
     bool autoUpdate() => container.read(patchClashConfigProvider).geoAutoUpdate;
-    Future<void> tapMenuPath(List<String> labels) async {
-      await tester.tap(
-        find.descendant(
-          of: find.byType(AppBar),
-          matching: find.byGlyph(AppGlyphs.more),
-        ),
-      );
-      await tester.pumpAndSettle();
-      for (final label in labels) {
-        await tester.tap(find.text(label).last);
-        await tester.pumpAndSettle();
-      }
-    }
+    final interval = find.text(l10n.resourceUpdateInterval);
 
     expect(find.byTooltip(l10n.update), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byGlyph(AppGlyphs.more),
+      ),
+      findsNothing,
+    );
     expect(autoUpdate(), isFalse);
+    expect(interval, findsNothing);
 
-    await tapMenuPath([l10n.autoUpdate, l10n.turnOn]);
+    await tester.tap(find.text(l10n.autoUpdate));
+    await tester.pumpAndSettle();
     expect(autoUpdate(), isTrue);
+    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+    expect(
+      find.text('${defaultClashConfig.geoUpdateInterval} ${l10n.hours}'),
+      findsOneWidget,
+    );
 
-    await tapMenuPath([l10n.autoUpdate, l10n.turnOff]);
-    expect(autoUpdate(), isFalse);
-
-    await tapMenuPath([l10n.resourceUpdateInterval]);
+    await tester.tap(interval);
+    await tester.pumpAndSettle();
     expect(find.byType(InputDialog), findsOneWidget);
     expect(
       find.text(defaultClashConfig.geoUpdateInterval.toString()),
@@ -185,6 +229,12 @@ void main() {
 
     expect(find.byType(InputDialog), findsNothing);
     expect(container.read(patchClashConfigProvider).geoUpdateInterval, 6);
+    expect(find.text('6 ${l10n.hours}'), findsOneWidget);
+
+    await tester.tap(find.byType(Switch));
+    await tester.pumpAndSettle();
+    expect(autoUpdate(), isFalse);
+    expect(interval, findsNothing);
     expect(tester.takeException(), null);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -227,7 +277,7 @@ void main() {
       matching: find.byType(DecorationListItem),
     );
     expect(
-      find.descendant(of: geoItem, matching: find.byType(CommonCircleLoading)),
+      find.descendant(of: geoItem, matching: find.byType(ActivityIndicator)),
       findsOneWidget,
     );
     expect(find.text(1.traffic.show), findsNothing);
@@ -242,7 +292,7 @@ void main() {
 
     expect(find.text(l10n.justNow), findsOneWidget);
     expect(find.text(l10n.daysAgo(3)), findsNothing);
-    expect(find.byType(CommonCircleLoading), findsNothing);
+    expect(find.byType(ActivityIndicator), findsNothing);
     expect(tester.takeException(), null);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -405,7 +455,7 @@ void main() {
         matching: find.text(l10n.unknown),
       ),
     );
-    expect(find.byType(CommonCircleLoading), findsNothing);
+    expect(find.byType(ActivityIndicator), findsNothing);
     expect(find.byGlyph(AppGlyphs.sync), findsOneWidget);
 
     container
@@ -416,7 +466,7 @@ void main() {
     expect(
       find.descendant(
         of: iconSetItem,
-        matching: find.byType(CommonCircleLoading),
+        matching: find.byType(ActivityIndicator),
       ),
       findsOneWidget,
     );
@@ -457,7 +507,7 @@ void main() {
           child: Builder(
             builder: (context) => TextButton(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(builder: (_) => const ResourcesView()),
+                HostPageRoute<void>(builder: (_) => const ResourcesView()),
               ),
               child: const Text('open'),
             ),

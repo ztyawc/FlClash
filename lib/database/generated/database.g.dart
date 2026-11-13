@@ -4332,6 +4332,915 @@ class ProxyDialersCompanion extends UpdateCompanion<RawProxyDialer> {
   }
 }
 
+class $IpQualitiesTable extends IpQualities
+    with TableInfo<$IpQualitiesTable, IpQualityRecord> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $IpQualitiesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _ipMeta = const VerificationMeta('ip');
+  @override
+  late final GeneratedColumn<String> ip = GeneratedColumn<String>(
+    'ip',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<IpQuality, String> quality =
+      GeneratedColumn<String>(
+        'quality',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      ).withConverter<IpQuality>($IpQualitiesTable.$converterquality);
+  static const VerificationMeta _checkedAtMeta = const VerificationMeta(
+    'checkedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> checkedAt = GeneratedColumn<DateTime>(
+    'checked_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [ip, quality, checkedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'ip_qualities';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<IpQualityRecord> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('ip')) {
+      context.handle(_ipMeta, ip.isAcceptableOrUnknown(data['ip']!, _ipMeta));
+    } else if (isInserting) {
+      context.missing(_ipMeta);
+    }
+    if (data.containsKey('checked_at')) {
+      context.handle(
+        _checkedAtMeta,
+        checkedAt.isAcceptableOrUnknown(data['checked_at']!, _checkedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_checkedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {ip};
+  @override
+  IpQualityRecord map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return IpQualityRecord(
+      ip: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}ip'],
+      )!,
+      quality: $IpQualitiesTable.$converterquality.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}quality'],
+        )!,
+      ),
+      checkedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}checked_at'],
+      )!,
+    );
+  }
+
+  @override
+  $IpQualitiesTable createAlias(String alias) {
+    return $IpQualitiesTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<IpQuality, String> $converterquality =
+      const IpQualityConverter();
+}
+
+class IpQualityRecord extends DataClass implements Insertable<IpQualityRecord> {
+  final String ip;
+  final IpQuality quality;
+  final DateTime checkedAt;
+  const IpQualityRecord({
+    required this.ip,
+    required this.quality,
+    required this.checkedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['ip'] = Variable<String>(ip);
+    {
+      map['quality'] = Variable<String>(
+        $IpQualitiesTable.$converterquality.toSql(quality),
+      );
+    }
+    map['checked_at'] = Variable<DateTime>(checkedAt);
+    return map;
+  }
+
+  IpQualitiesCompanion toCompanion(bool nullToAbsent) {
+    return IpQualitiesCompanion(
+      ip: Value(ip),
+      quality: Value(quality),
+      checkedAt: Value(checkedAt),
+    );
+  }
+
+  factory IpQualityRecord.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return IpQualityRecord(
+      ip: serializer.fromJson<String>(json['ip']),
+      quality: serializer.fromJson<IpQuality>(json['quality']),
+      checkedAt: serializer.fromJson<DateTime>(json['checkedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'ip': serializer.toJson<String>(ip),
+      'quality': serializer.toJson<IpQuality>(quality),
+      'checkedAt': serializer.toJson<DateTime>(checkedAt),
+    };
+  }
+
+  IpQualityRecord copyWith({
+    String? ip,
+    IpQuality? quality,
+    DateTime? checkedAt,
+  }) => IpQualityRecord(
+    ip: ip ?? this.ip,
+    quality: quality ?? this.quality,
+    checkedAt: checkedAt ?? this.checkedAt,
+  );
+  IpQualityRecord copyWithCompanion(IpQualitiesCompanion data) {
+    return IpQualityRecord(
+      ip: data.ip.present ? data.ip.value : this.ip,
+      quality: data.quality.present ? data.quality.value : this.quality,
+      checkedAt: data.checkedAt.present ? data.checkedAt.value : this.checkedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('IpQualityRecord(')
+          ..write('ip: $ip, ')
+          ..write('quality: $quality, ')
+          ..write('checkedAt: $checkedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(ip, quality, checkedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is IpQualityRecord &&
+          other.ip == this.ip &&
+          other.quality == this.quality &&
+          other.checkedAt == this.checkedAt);
+}
+
+class IpQualitiesCompanion extends UpdateCompanion<IpQualityRecord> {
+  final Value<String> ip;
+  final Value<IpQuality> quality;
+  final Value<DateTime> checkedAt;
+  final Value<int> rowid;
+  const IpQualitiesCompanion({
+    this.ip = const Value.absent(),
+    this.quality = const Value.absent(),
+    this.checkedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  IpQualitiesCompanion.insert({
+    required String ip,
+    required IpQuality quality,
+    required DateTime checkedAt,
+    this.rowid = const Value.absent(),
+  }) : ip = Value(ip),
+       quality = Value(quality),
+       checkedAt = Value(checkedAt);
+  static Insertable<IpQualityRecord> custom({
+    Expression<String>? ip,
+    Expression<String>? quality,
+    Expression<DateTime>? checkedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (ip != null) 'ip': ip,
+      if (quality != null) 'quality': quality,
+      if (checkedAt != null) 'checked_at': checkedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  IpQualitiesCompanion copyWith({
+    Value<String>? ip,
+    Value<IpQuality>? quality,
+    Value<DateTime>? checkedAt,
+    Value<int>? rowid,
+  }) {
+    return IpQualitiesCompanion(
+      ip: ip ?? this.ip,
+      quality: quality ?? this.quality,
+      checkedAt: checkedAt ?? this.checkedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (ip.present) {
+      map['ip'] = Variable<String>(ip.value);
+    }
+    if (quality.present) {
+      map['quality'] = Variable<String>(
+        $IpQualitiesTable.$converterquality.toSql(quality.value),
+      );
+    }
+    if (checkedAt.present) {
+      map['checked_at'] = Variable<DateTime>(checkedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('IpQualitiesCompanion(')
+          ..write('ip: $ip, ')
+          ..write('quality: $quality, ')
+          ..write('checkedAt: $checkedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MitmModulesTable extends MitmModules
+    with TableInfo<$MitmModulesTable, RawMitmModule> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MitmModulesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _descriptionMeta = const VerificationMeta(
+    'description',
+  );
+  @override
+  late final GeneratedColumn<String> description = GeneratedColumn<String>(
+    'description',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _urlMeta = const VerificationMeta('url');
+  @override
+  late final GeneratedColumn<String> url = GeneratedColumn<String>(
+    'url',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _enabledMeta = const VerificationMeta(
+    'enabled',
+  );
+  @override
+  late final GeneratedColumn<bool> enabled = GeneratedColumn<bool>(
+    'enabled',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("enabled" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
+  static const VerificationMeta _orderMeta = const VerificationMeta('order');
+  @override
+  late final GeneratedColumn<int> order = GeneratedColumn<int>(
+    'order',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<Map<String, String>, String>
+  arguments = GeneratedColumn<String>(
+    'arguments',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('{}'),
+  ).withConverter<Map<String, String>>($MitmModulesTable.$converterarguments);
+  @override
+  late final GeneratedColumnWithTypeConverter<Map<String, String>, String>
+  resources = GeneratedColumn<String>(
+    'resources',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('{}'),
+  ).withConverter<Map<String, String>>($MitmModulesTable.$converterresources);
+  static const VerificationMeta _systemMeta = const VerificationMeta('system');
+  @override
+  late final GeneratedColumn<String> system = GeneratedColumn<String>(
+    'system',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _scriptsMeta = const VerificationMeta(
+    'scripts',
+  );
+  @override
+  late final GeneratedColumn<int> scripts = GeneratedColumn<int>(
+    'scripts',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _lastUpdateTimeMeta = const VerificationMeta(
+    'lastUpdateTime',
+  );
+  @override
+  late final GeneratedColumn<DateTime> lastUpdateTime =
+      GeneratedColumn<DateTime>(
+        'last_update_time',
+        aliasedName,
+        false,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: true,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    name,
+    description,
+    url,
+    enabled,
+    order,
+    arguments,
+    resources,
+    system,
+    scripts,
+    lastUpdateTime,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'mitm_modules';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RawMitmModule> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('description')) {
+      context.handle(
+        _descriptionMeta,
+        description.isAcceptableOrUnknown(
+          data['description']!,
+          _descriptionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('url')) {
+      context.handle(
+        _urlMeta,
+        url.isAcceptableOrUnknown(data['url']!, _urlMeta),
+      );
+    }
+    if (data.containsKey('enabled')) {
+      context.handle(
+        _enabledMeta,
+        enabled.isAcceptableOrUnknown(data['enabled']!, _enabledMeta),
+      );
+    }
+    if (data.containsKey('order')) {
+      context.handle(
+        _orderMeta,
+        order.isAcceptableOrUnknown(data['order']!, _orderMeta),
+      );
+    }
+    if (data.containsKey('system')) {
+      context.handle(
+        _systemMeta,
+        system.isAcceptableOrUnknown(data['system']!, _systemMeta),
+      );
+    }
+    if (data.containsKey('scripts')) {
+      context.handle(
+        _scriptsMeta,
+        scripts.isAcceptableOrUnknown(data['scripts']!, _scriptsMeta),
+      );
+    }
+    if (data.containsKey('last_update_time')) {
+      context.handle(
+        _lastUpdateTimeMeta,
+        lastUpdateTime.isAcceptableOrUnknown(
+          data['last_update_time']!,
+          _lastUpdateTimeMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_lastUpdateTimeMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  RawMitmModule map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RawMitmModule(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      description: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}description'],
+      )!,
+      url: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}url'],
+      ),
+      enabled: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}enabled'],
+      )!,
+      order: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}order'],
+      ),
+      arguments: $MitmModulesTable.$converterarguments.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}arguments'],
+        )!,
+      ),
+      resources: $MitmModulesTable.$converterresources.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.string,
+          data['${effectivePrefix}resources'],
+        )!,
+      ),
+      system: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}system'],
+      ),
+      scripts: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}scripts'],
+      )!,
+      lastUpdateTime: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_update_time'],
+      )!,
+    );
+  }
+
+  @override
+  $MitmModulesTable createAlias(String alias) {
+    return $MitmModulesTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<Map<String, String>, String> $converterarguments =
+      const StringMapConverter();
+  static TypeConverter<Map<String, String>, String> $converterresources =
+      const StringMapConverter();
+}
+
+class RawMitmModule extends DataClass implements Insertable<RawMitmModule> {
+  final int id;
+  final String name;
+  final String description;
+  final String? url;
+  final bool enabled;
+  final int? order;
+  final Map<String, String> arguments;
+  final Map<String, String> resources;
+  final String? system;
+  final int scripts;
+  final DateTime lastUpdateTime;
+  const RawMitmModule({
+    required this.id,
+    required this.name,
+    required this.description,
+    this.url,
+    required this.enabled,
+    this.order,
+    required this.arguments,
+    required this.resources,
+    this.system,
+    required this.scripts,
+    required this.lastUpdateTime,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['name'] = Variable<String>(name);
+    map['description'] = Variable<String>(description);
+    if (!nullToAbsent || url != null) {
+      map['url'] = Variable<String>(url);
+    }
+    map['enabled'] = Variable<bool>(enabled);
+    if (!nullToAbsent || order != null) {
+      map['order'] = Variable<int>(order);
+    }
+    {
+      map['arguments'] = Variable<String>(
+        $MitmModulesTable.$converterarguments.toSql(arguments),
+      );
+    }
+    {
+      map['resources'] = Variable<String>(
+        $MitmModulesTable.$converterresources.toSql(resources),
+      );
+    }
+    if (!nullToAbsent || system != null) {
+      map['system'] = Variable<String>(system);
+    }
+    map['scripts'] = Variable<int>(scripts);
+    map['last_update_time'] = Variable<DateTime>(lastUpdateTime);
+    return map;
+  }
+
+  MitmModulesCompanion toCompanion(bool nullToAbsent) {
+    return MitmModulesCompanion(
+      id: Value(id),
+      name: Value(name),
+      description: Value(description),
+      url: url == null && nullToAbsent ? const Value.absent() : Value(url),
+      enabled: Value(enabled),
+      order: order == null && nullToAbsent
+          ? const Value.absent()
+          : Value(order),
+      arguments: Value(arguments),
+      resources: Value(resources),
+      system: system == null && nullToAbsent
+          ? const Value.absent()
+          : Value(system),
+      scripts: Value(scripts),
+      lastUpdateTime: Value(lastUpdateTime),
+    );
+  }
+
+  factory RawMitmModule.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RawMitmModule(
+      id: serializer.fromJson<int>(json['id']),
+      name: serializer.fromJson<String>(json['name']),
+      description: serializer.fromJson<String>(json['description']),
+      url: serializer.fromJson<String?>(json['url']),
+      enabled: serializer.fromJson<bool>(json['enabled']),
+      order: serializer.fromJson<int?>(json['order']),
+      arguments: serializer.fromJson<Map<String, String>>(json['arguments']),
+      resources: serializer.fromJson<Map<String, String>>(json['resources']),
+      system: serializer.fromJson<String?>(json['system']),
+      scripts: serializer.fromJson<int>(json['scripts']),
+      lastUpdateTime: serializer.fromJson<DateTime>(json['lastUpdateTime']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'name': serializer.toJson<String>(name),
+      'description': serializer.toJson<String>(description),
+      'url': serializer.toJson<String?>(url),
+      'enabled': serializer.toJson<bool>(enabled),
+      'order': serializer.toJson<int?>(order),
+      'arguments': serializer.toJson<Map<String, String>>(arguments),
+      'resources': serializer.toJson<Map<String, String>>(resources),
+      'system': serializer.toJson<String?>(system),
+      'scripts': serializer.toJson<int>(scripts),
+      'lastUpdateTime': serializer.toJson<DateTime>(lastUpdateTime),
+    };
+  }
+
+  RawMitmModule copyWith({
+    int? id,
+    String? name,
+    String? description,
+    Value<String?> url = const Value.absent(),
+    bool? enabled,
+    Value<int?> order = const Value.absent(),
+    Map<String, String>? arguments,
+    Map<String, String>? resources,
+    Value<String?> system = const Value.absent(),
+    int? scripts,
+    DateTime? lastUpdateTime,
+  }) => RawMitmModule(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    description: description ?? this.description,
+    url: url.present ? url.value : this.url,
+    enabled: enabled ?? this.enabled,
+    order: order.present ? order.value : this.order,
+    arguments: arguments ?? this.arguments,
+    resources: resources ?? this.resources,
+    system: system.present ? system.value : this.system,
+    scripts: scripts ?? this.scripts,
+    lastUpdateTime: lastUpdateTime ?? this.lastUpdateTime,
+  );
+  RawMitmModule copyWithCompanion(MitmModulesCompanion data) {
+    return RawMitmModule(
+      id: data.id.present ? data.id.value : this.id,
+      name: data.name.present ? data.name.value : this.name,
+      description: data.description.present
+          ? data.description.value
+          : this.description,
+      url: data.url.present ? data.url.value : this.url,
+      enabled: data.enabled.present ? data.enabled.value : this.enabled,
+      order: data.order.present ? data.order.value : this.order,
+      arguments: data.arguments.present ? data.arguments.value : this.arguments,
+      resources: data.resources.present ? data.resources.value : this.resources,
+      system: data.system.present ? data.system.value : this.system,
+      scripts: data.scripts.present ? data.scripts.value : this.scripts,
+      lastUpdateTime: data.lastUpdateTime.present
+          ? data.lastUpdateTime.value
+          : this.lastUpdateTime,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RawMitmModule(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('description: $description, ')
+          ..write('url: $url, ')
+          ..write('enabled: $enabled, ')
+          ..write('order: $order, ')
+          ..write('arguments: $arguments, ')
+          ..write('resources: $resources, ')
+          ..write('system: $system, ')
+          ..write('scripts: $scripts, ')
+          ..write('lastUpdateTime: $lastUpdateTime')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    name,
+    description,
+    url,
+    enabled,
+    order,
+    arguments,
+    resources,
+    system,
+    scripts,
+    lastUpdateTime,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RawMitmModule &&
+          other.id == this.id &&
+          other.name == this.name &&
+          other.description == this.description &&
+          other.url == this.url &&
+          other.enabled == this.enabled &&
+          other.order == this.order &&
+          other.arguments == this.arguments &&
+          other.resources == this.resources &&
+          other.system == this.system &&
+          other.scripts == this.scripts &&
+          other.lastUpdateTime == this.lastUpdateTime);
+}
+
+class MitmModulesCompanion extends UpdateCompanion<RawMitmModule> {
+  final Value<int> id;
+  final Value<String> name;
+  final Value<String> description;
+  final Value<String?> url;
+  final Value<bool> enabled;
+  final Value<int?> order;
+  final Value<Map<String, String>> arguments;
+  final Value<Map<String, String>> resources;
+  final Value<String?> system;
+  final Value<int> scripts;
+  final Value<DateTime> lastUpdateTime;
+  const MitmModulesCompanion({
+    this.id = const Value.absent(),
+    this.name = const Value.absent(),
+    this.description = const Value.absent(),
+    this.url = const Value.absent(),
+    this.enabled = const Value.absent(),
+    this.order = const Value.absent(),
+    this.arguments = const Value.absent(),
+    this.resources = const Value.absent(),
+    this.system = const Value.absent(),
+    this.scripts = const Value.absent(),
+    this.lastUpdateTime = const Value.absent(),
+  });
+  MitmModulesCompanion.insert({
+    this.id = const Value.absent(),
+    required String name,
+    this.description = const Value.absent(),
+    this.url = const Value.absent(),
+    this.enabled = const Value.absent(),
+    this.order = const Value.absent(),
+    this.arguments = const Value.absent(),
+    this.resources = const Value.absent(),
+    this.system = const Value.absent(),
+    this.scripts = const Value.absent(),
+    required DateTime lastUpdateTime,
+  }) : name = Value(name),
+       lastUpdateTime = Value(lastUpdateTime);
+  static Insertable<RawMitmModule> custom({
+    Expression<int>? id,
+    Expression<String>? name,
+    Expression<String>? description,
+    Expression<String>? url,
+    Expression<bool>? enabled,
+    Expression<int>? order,
+    Expression<String>? arguments,
+    Expression<String>? resources,
+    Expression<String>? system,
+    Expression<int>? scripts,
+    Expression<DateTime>? lastUpdateTime,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (name != null) 'name': name,
+      if (description != null) 'description': description,
+      if (url != null) 'url': url,
+      if (enabled != null) 'enabled': enabled,
+      if (order != null) 'order': order,
+      if (arguments != null) 'arguments': arguments,
+      if (resources != null) 'resources': resources,
+      if (system != null) 'system': system,
+      if (scripts != null) 'scripts': scripts,
+      if (lastUpdateTime != null) 'last_update_time': lastUpdateTime,
+    });
+  }
+
+  MitmModulesCompanion copyWith({
+    Value<int>? id,
+    Value<String>? name,
+    Value<String>? description,
+    Value<String?>? url,
+    Value<bool>? enabled,
+    Value<int?>? order,
+    Value<Map<String, String>>? arguments,
+    Value<Map<String, String>>? resources,
+    Value<String?>? system,
+    Value<int>? scripts,
+    Value<DateTime>? lastUpdateTime,
+  }) {
+    return MitmModulesCompanion(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      url: url ?? this.url,
+      enabled: enabled ?? this.enabled,
+      order: order ?? this.order,
+      arguments: arguments ?? this.arguments,
+      resources: resources ?? this.resources,
+      system: system ?? this.system,
+      scripts: scripts ?? this.scripts,
+      lastUpdateTime: lastUpdateTime ?? this.lastUpdateTime,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (description.present) {
+      map['description'] = Variable<String>(description.value);
+    }
+    if (url.present) {
+      map['url'] = Variable<String>(url.value);
+    }
+    if (enabled.present) {
+      map['enabled'] = Variable<bool>(enabled.value);
+    }
+    if (order.present) {
+      map['order'] = Variable<int>(order.value);
+    }
+    if (arguments.present) {
+      map['arguments'] = Variable<String>(
+        $MitmModulesTable.$converterarguments.toSql(arguments.value),
+      );
+    }
+    if (resources.present) {
+      map['resources'] = Variable<String>(
+        $MitmModulesTable.$converterresources.toSql(resources.value),
+      );
+    }
+    if (system.present) {
+      map['system'] = Variable<String>(system.value);
+    }
+    if (scripts.present) {
+      map['scripts'] = Variable<int>(scripts.value);
+    }
+    if (lastUpdateTime.present) {
+      map['last_update_time'] = Variable<DateTime>(lastUpdateTime.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MitmModulesCompanion(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('description: $description, ')
+          ..write('url: $url, ')
+          ..write('enabled: $enabled, ')
+          ..write('order: $order, ')
+          ..write('arguments: $arguments, ')
+          ..write('resources: $resources, ')
+          ..write('system: $system, ')
+          ..write('scripts: $scripts, ')
+          ..write('lastUpdateTime: $lastUpdateTime')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$Database extends GeneratedDatabase {
   _$Database(QueryExecutor e) : super(e);
   $DatabaseManager get managers => $DatabaseManager(this);
@@ -4345,6 +5254,8 @@ abstract class _$Database extends GeneratedDatabase {
   late final $ClashProvidersTable clashProviders = $ClashProvidersTable(this);
   late final $CustomProxiesTable customProxies = $CustomProxiesTable(this);
   late final $ProxyDialersTable proxyDialers = $ProxyDialersTable(this);
+  late final $IpQualitiesTable ipQualities = $IpQualitiesTable(this);
+  late final $MitmModulesTable mitmModules = $MitmModulesTable(this);
   late final Index idxRuleTarget = Index(
     'idx_rule_target',
     'CREATE INDEX idx_rule_target ON rules (rule_target)',
@@ -4376,6 +5287,8 @@ abstract class _$Database extends GeneratedDatabase {
   late final ProxyDialersDao proxyDialersDao = ProxyDialersDao(
     this as Database,
   );
+  late final IpQualitiesDao ipQualitiesDao = IpQualitiesDao(this as Database);
+  late final MitmModulesDao mitmModulesDao = MitmModulesDao(this as Database);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -4391,6 +5304,8 @@ abstract class _$Database extends GeneratedDatabase {
     clashProviders,
     customProxies,
     proxyDialers,
+    ipQualities,
+    mitmModules,
     idxRuleTarget,
     idxRulesProfileOrder,
     idxProxyGroupsProfileOrder,
@@ -7994,6 +8909,509 @@ typedef $$ProxyDialersTableProcessedTableManager =
       RawProxyDialer,
       PrefetchHooks Function({bool profileId, bool proxyId})
     >;
+typedef $$IpQualitiesTableCreateCompanionBuilder =
+    IpQualitiesCompanion Function({
+      required String ip,
+      required IpQuality quality,
+      required DateTime checkedAt,
+      Value<int> rowid,
+    });
+typedef $$IpQualitiesTableUpdateCompanionBuilder =
+    IpQualitiesCompanion Function({
+      Value<String> ip,
+      Value<IpQuality> quality,
+      Value<DateTime> checkedAt,
+      Value<int> rowid,
+    });
+
+class $$IpQualitiesTableFilterComposer
+    extends Composer<_$Database, $IpQualitiesTable> {
+  $$IpQualitiesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get ip => $composableBuilder(
+    column: $table.ip,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<IpQuality, IpQuality, String> get quality =>
+      $composableBuilder(
+        column: $table.quality,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<DateTime> get checkedAt => $composableBuilder(
+    column: $table.checkedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$IpQualitiesTableOrderingComposer
+    extends Composer<_$Database, $IpQualitiesTable> {
+  $$IpQualitiesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get ip => $composableBuilder(
+    column: $table.ip,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get quality => $composableBuilder(
+    column: $table.quality,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get checkedAt => $composableBuilder(
+    column: $table.checkedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$IpQualitiesTableAnnotationComposer
+    extends Composer<_$Database, $IpQualitiesTable> {
+  $$IpQualitiesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get ip =>
+      $composableBuilder(column: $table.ip, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<IpQuality, String> get quality =>
+      $composableBuilder(column: $table.quality, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get checkedAt =>
+      $composableBuilder(column: $table.checkedAt, builder: (column) => column);
+}
+
+class $$IpQualitiesTableTableManager
+    extends
+        RootTableManager<
+          _$Database,
+          $IpQualitiesTable,
+          IpQualityRecord,
+          $$IpQualitiesTableFilterComposer,
+          $$IpQualitiesTableOrderingComposer,
+          $$IpQualitiesTableAnnotationComposer,
+          $$IpQualitiesTableCreateCompanionBuilder,
+          $$IpQualitiesTableUpdateCompanionBuilder,
+          (
+            IpQualityRecord,
+            BaseReferences<_$Database, $IpQualitiesTable, IpQualityRecord>,
+          ),
+          IpQualityRecord,
+          PrefetchHooks Function()
+        > {
+  $$IpQualitiesTableTableManager(_$Database db, $IpQualitiesTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$IpQualitiesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$IpQualitiesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$IpQualitiesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> ip = const Value.absent(),
+                Value<IpQuality> quality = const Value.absent(),
+                Value<DateTime> checkedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => IpQualitiesCompanion(
+                ip: ip,
+                quality: quality,
+                checkedAt: checkedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String ip,
+                required IpQuality quality,
+                required DateTime checkedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => IpQualitiesCompanion.insert(
+                ip: ip,
+                quality: quality,
+                checkedAt: checkedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$IpQualitiesTable, IpQualityRecord>(table),
+                  BaseReferences<
+                    _$Database,
+                    $IpQualitiesTable,
+                    IpQualityRecord
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$IpQualitiesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$Database,
+      $IpQualitiesTable,
+      IpQualityRecord,
+      $$IpQualitiesTableFilterComposer,
+      $$IpQualitiesTableOrderingComposer,
+      $$IpQualitiesTableAnnotationComposer,
+      $$IpQualitiesTableCreateCompanionBuilder,
+      $$IpQualitiesTableUpdateCompanionBuilder,
+      (
+        IpQualityRecord,
+        BaseReferences<_$Database, $IpQualitiesTable, IpQualityRecord>,
+      ),
+      IpQualityRecord,
+      PrefetchHooks Function()
+    >;
+typedef $$MitmModulesTableCreateCompanionBuilder =
+    MitmModulesCompanion Function({
+      Value<int> id,
+      required String name,
+      Value<String> description,
+      Value<String?> url,
+      Value<bool> enabled,
+      Value<int?> order,
+      Value<Map<String, String>> arguments,
+      Value<Map<String, String>> resources,
+      Value<String?> system,
+      Value<int> scripts,
+      required DateTime lastUpdateTime,
+    });
+typedef $$MitmModulesTableUpdateCompanionBuilder =
+    MitmModulesCompanion Function({
+      Value<int> id,
+      Value<String> name,
+      Value<String> description,
+      Value<String?> url,
+      Value<bool> enabled,
+      Value<int?> order,
+      Value<Map<String, String>> arguments,
+      Value<Map<String, String>> resources,
+      Value<String?> system,
+      Value<int> scripts,
+      Value<DateTime> lastUpdateTime,
+    });
+
+class $$MitmModulesTableFilterComposer
+    extends Composer<_$Database, $MitmModulesTable> {
+  $$MitmModulesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get url => $composableBuilder(
+    column: $table.url,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get enabled => $composableBuilder(
+    column: $table.enabled,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get order => $composableBuilder(
+    column: $table.order,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<
+    Map<String, String>,
+    Map<String, String>,
+    String
+  >
+  get arguments => $composableBuilder(
+    column: $table.arguments,
+    builder: (column) => ColumnWithTypeConverterFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<
+    Map<String, String>,
+    Map<String, String>,
+    String
+  >
+  get resources => $composableBuilder(
+    column: $table.resources,
+    builder: (column) => ColumnWithTypeConverterFilters(column),
+  );
+
+  ColumnFilters<String> get system => $composableBuilder(
+    column: $table.system,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get scripts => $composableBuilder(
+    column: $table.scripts,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastUpdateTime => $composableBuilder(
+    column: $table.lastUpdateTime,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$MitmModulesTableOrderingComposer
+    extends Composer<_$Database, $MitmModulesTable> {
+  $$MitmModulesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get url => $composableBuilder(
+    column: $table.url,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get enabled => $composableBuilder(
+    column: $table.enabled,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get order => $composableBuilder(
+    column: $table.order,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get arguments => $composableBuilder(
+    column: $table.arguments,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get resources => $composableBuilder(
+    column: $table.resources,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get system => $composableBuilder(
+    column: $table.system,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get scripts => $composableBuilder(
+    column: $table.scripts,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastUpdateTime => $composableBuilder(
+    column: $table.lastUpdateTime,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$MitmModulesTableAnnotationComposer
+    extends Composer<_$Database, $MitmModulesTable> {
+  $$MitmModulesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get description => $composableBuilder(
+    column: $table.description,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get url =>
+      $composableBuilder(column: $table.url, builder: (column) => column);
+
+  GeneratedColumn<bool> get enabled =>
+      $composableBuilder(column: $table.enabled, builder: (column) => column);
+
+  GeneratedColumn<int> get order =>
+      $composableBuilder(column: $table.order, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<Map<String, String>, String> get arguments =>
+      $composableBuilder(column: $table.arguments, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<Map<String, String>, String> get resources =>
+      $composableBuilder(column: $table.resources, builder: (column) => column);
+
+  GeneratedColumn<String> get system =>
+      $composableBuilder(column: $table.system, builder: (column) => column);
+
+  GeneratedColumn<int> get scripts =>
+      $composableBuilder(column: $table.scripts, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastUpdateTime => $composableBuilder(
+    column: $table.lastUpdateTime,
+    builder: (column) => column,
+  );
+}
+
+class $$MitmModulesTableTableManager
+    extends
+        RootTableManager<
+          _$Database,
+          $MitmModulesTable,
+          RawMitmModule,
+          $$MitmModulesTableFilterComposer,
+          $$MitmModulesTableOrderingComposer,
+          $$MitmModulesTableAnnotationComposer,
+          $$MitmModulesTableCreateCompanionBuilder,
+          $$MitmModulesTableUpdateCompanionBuilder,
+          (
+            RawMitmModule,
+            BaseReferences<_$Database, $MitmModulesTable, RawMitmModule>,
+          ),
+          RawMitmModule,
+          PrefetchHooks Function()
+        > {
+  $$MitmModulesTableTableManager(_$Database db, $MitmModulesTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$MitmModulesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$MitmModulesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$MitmModulesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<String> description = const Value.absent(),
+                Value<String?> url = const Value.absent(),
+                Value<bool> enabled = const Value.absent(),
+                Value<int?> order = const Value.absent(),
+                Value<Map<String, String>> arguments = const Value.absent(),
+                Value<Map<String, String>> resources = const Value.absent(),
+                Value<String?> system = const Value.absent(),
+                Value<int> scripts = const Value.absent(),
+                Value<DateTime> lastUpdateTime = const Value.absent(),
+              }) => MitmModulesCompanion(
+                id: id,
+                name: name,
+                description: description,
+                url: url,
+                enabled: enabled,
+                order: order,
+                arguments: arguments,
+                resources: resources,
+                system: system,
+                scripts: scripts,
+                lastUpdateTime: lastUpdateTime,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String name,
+                Value<String> description = const Value.absent(),
+                Value<String?> url = const Value.absent(),
+                Value<bool> enabled = const Value.absent(),
+                Value<int?> order = const Value.absent(),
+                Value<Map<String, String>> arguments = const Value.absent(),
+                Value<Map<String, String>> resources = const Value.absent(),
+                Value<String?> system = const Value.absent(),
+                Value<int> scripts = const Value.absent(),
+                required DateTime lastUpdateTime,
+              }) => MitmModulesCompanion.insert(
+                id: id,
+                name: name,
+                description: description,
+                url: url,
+                enabled: enabled,
+                order: order,
+                arguments: arguments,
+                resources: resources,
+                system: system,
+                scripts: scripts,
+                lastUpdateTime: lastUpdateTime,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$MitmModulesTable, RawMitmModule>(table),
+                  BaseReferences<_$Database, $MitmModulesTable, RawMitmModule>(
+                    db,
+                    table,
+                    e,
+                  ),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$MitmModulesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$Database,
+      $MitmModulesTable,
+      RawMitmModule,
+      $$MitmModulesTableFilterComposer,
+      $$MitmModulesTableOrderingComposer,
+      $$MitmModulesTableAnnotationComposer,
+      $$MitmModulesTableCreateCompanionBuilder,
+      $$MitmModulesTableUpdateCompanionBuilder,
+      (
+        RawMitmModule,
+        BaseReferences<_$Database, $MitmModulesTable, RawMitmModule>,
+      ),
+      RawMitmModule,
+      PrefetchHooks Function()
+    >;
 
 class $DatabaseManager {
   final _$Database _db;
@@ -8018,6 +9436,10 @@ class $DatabaseManager {
       $$CustomProxiesTableTableManager(_db, _db.customProxies);
   $$ProxyDialersTableTableManager get proxyDialers =>
       $$ProxyDialersTableTableManager(_db, _db.proxyDialers);
+  $$IpQualitiesTableTableManager get ipQualities =>
+      $$IpQualitiesTableTableManager(_db, _db.ipQualities);
+  $$MitmModulesTableTableManager get mitmModules =>
+      $$MitmModulesTableTableManager(_db, _db.mitmModules);
 }
 
 mixin _$ProfilesDaoMixin on DatabaseAccessor<Database> {
@@ -8144,4 +9566,28 @@ class ProxyDialersDaoManager {
       $$CustomProxiesTableTableManager(_db.attachedDatabase, _db.customProxies);
   $$ProxyDialersTableTableManager get proxyDialers =>
       $$ProxyDialersTableTableManager(_db.attachedDatabase, _db.proxyDialers);
+}
+
+mixin _$IpQualitiesDaoMixin on DatabaseAccessor<Database> {
+  $IpQualitiesTable get ipQualities => attachedDatabase.ipQualities;
+  IpQualitiesDaoManager get managers => IpQualitiesDaoManager(this);
+}
+
+class IpQualitiesDaoManager {
+  final _$IpQualitiesDaoMixin _db;
+  IpQualitiesDaoManager(this._db);
+  $$IpQualitiesTableTableManager get ipQualities =>
+      $$IpQualitiesTableTableManager(_db.attachedDatabase, _db.ipQualities);
+}
+
+mixin _$MitmModulesDaoMixin on DatabaseAccessor<Database> {
+  $MitmModulesTable get mitmModules => attachedDatabase.mitmModules;
+  MitmModulesDaoManager get managers => MitmModulesDaoManager(this);
+}
+
+class MitmModulesDaoManager {
+  final _$MitmModulesDaoMixin _db;
+  MitmModulesDaoManager(this._db);
+  $$MitmModulesTableTableManager get mitmModules =>
+      $$MitmModulesTableTableManager(_db.attachedDatabase, _db.mitmModules);
 }

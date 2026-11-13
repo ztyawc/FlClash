@@ -10,7 +10,7 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/profiles/custom/groups.dart';
 import 'package:fl_clash/views/profiles/custom/members.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -103,6 +103,8 @@ final _optionSheet = find.byWidgetPredicate(
 Future<void> _addOption(WidgetTester tester, String label) async {
   await _openOptions(tester);
   final option = find.descendant(of: _optionSheet, matching: find.text(label));
+  await tester.ensureVisible(option);
+  await tester.pump();
   await tester.tap(option);
   await tester.pumpAndSettle();
   expect(option, findsNothing);
@@ -130,7 +132,7 @@ Finder _bannerText(String text) => find.descendant(
 );
 
 Future<void> _dismissSaveBlocked(WidgetTester tester, String reason) async {
-  final dialog = find.byType(CommonDialog);
+  final dialog = find.byType(AlertDialog);
   expect(
     find.descendant(
       of: dialog,
@@ -168,11 +170,11 @@ void main() {
     ).copyWith(id: 2);
     core = _MockCore();
     when(() => core.validateFilters(any())).thenAnswer(
-      (invocation) async => [
-        for (final filter
-            in invocation.positionalArguments.single as List<String>)
-          filter.contains('(') ? 'missing closing )' : '',
-      ],
+      (invocation) async => {
+        for (final (index, filter)
+            in (invocation.positionalArguments.single as List<String>).indexed)
+          if (filter.contains('(')) index: 'missing closing )',
+      },
     );
     final built = ProviderContainer(
       overrides: [
@@ -319,7 +321,7 @@ void main() {
       );
 
       await pumpEditView(tester, const EditProxyGroupView());
-      final list = find.byType(SuperSliverReorderableList);
+      final list = find.byType(SliverPrismReorderableList);
       Future<void> move(int from, int to) async {
         tester.widget<SliverReorderableList>(list).onReorderItem!(from, to);
         await tester.pump();
@@ -412,7 +414,7 @@ void main() {
 
       tester
           .widget<SliverReorderableList>(
-            find.byType(SuperSliverReorderableList),
+            find.byType(SliverPrismReorderableList),
           )
           .onReorderItem!(2, 1);
       await tester.pump();
@@ -518,7 +520,7 @@ void main() {
       Finder offered(String name) =>
           find.descendant(of: picker, matching: find.text(name));
       Finder listed(String name) => find.descendant(
-        of: find.byType(SuperSliverReorderableList),
+        of: find.byType(SliverPrismReorderableList),
         matching: find.text(name),
       );
 
@@ -623,14 +625,14 @@ void main() {
       expect(group.filter, isNull);
       expect(
         find.descendant(
-          of: find.byType(SuperSliverReorderableList),
+          of: find.byType(SliverPrismReorderableList),
           matching: find.text(_remainingTraffic.label),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
-          of: find.byType(SuperSliverReorderableList),
+          of: find.byType(SliverPrismReorderableList),
           matching: find.text(l.excludeFilter),
         ),
         findsOneWidget,
@@ -653,7 +655,7 @@ void main() {
       tester,
       const CustomScrollView(slivers: [ProxyProviderFiltersSliver()]),
     );
-    final list = find.byType(SuperSliverReorderableList);
+    final list = find.byType(SliverPrismReorderableList);
     Future<void> move(int from, int to) async {
       tester.widget<SliverReorderableList>(list).onReorderItem!(from, to);
       await tester.pump();
@@ -728,7 +730,7 @@ void main() {
       await tester.pumpAndSettle();
       await _dismissSaveBlocked(tester, l.customIssueNoProxySource);
 
-      expect(find.byType(CommonDialog), findsNothing);
+      expect(find.byType(AlertDialog), findsNothing);
       expect(find.byType(EditProxyGroupView), findsOneWidget);
       expect(_bannerText(l.customIssueNoProxySource), findsOneWidget);
     });

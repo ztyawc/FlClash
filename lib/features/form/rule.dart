@@ -6,7 +6,7 @@ import 'package:fl_clash/models/clash_config.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 
 import 'form_page.dart';
 import 'form_row.dart';
@@ -70,11 +70,11 @@ class RuleItem extends StatelessWidget {
   }
 
   Widget _buildInfoWidget(BuildContext context, String? message) {
-    return CommonMinIconButtonTheme(
+    return MinIconButtonTheme(
       child: IconButton(
         tooltip: context.appLocalizations.tip,
         onPressed: () {
-          dialogs.showMessage(
+          dialogs.showAlert(
             message: TextSpan(
               text:
                   message ??

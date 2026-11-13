@@ -4,7 +4,7 @@ import 'package:fl_clash/models/clash_config.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class AddedRulesView extends ConsumerStatefulWidget {
@@ -45,8 +45,9 @@ class _AddedRulesViewState extends ConsumerState<AddedRulesView> {
   void _handleQuickActions() {
     showSheet<void>(
       context: context,
-      builder: (_) =>
-          RulePresetSheet(onAdd: ref.read(globalRulesProvider.notifier).putAll),
+      builder: (_) => RulePresetSheet(
+        onAdd: (rules) => ref.read(globalRulesProvider.notifier).putAll(rules),
+      ),
     );
   }
 
@@ -110,14 +111,14 @@ class _AddedRulesViewState extends ConsumerState<AddedRulesView> {
         tooltip: appLocalizations.selectAll,
       ),
     ];
-    return CommonPopScope(
+    return PopGuard(
       onPop: isSelecting
           ? (_) {
               ref.read(itemsProvider(_key).notifier).value = {};
               return false;
             }
           : null,
-      child: CommonScaffold(
+      child: Scaffold(
         title: appLocalizations.addedRules,
         searchState: AppBarSearchState(onSearch: _handleSearch),
         actions: [
@@ -147,21 +148,20 @@ class _AddedRulesViewState extends ConsumerState<AddedRulesView> {
           ),
           child: Builder(
             builder: (context) => isSearching
-                ? ListView.builder(
+                ? PrismListView(
                     padding: _listPadding(context),
                     itemBuilder: (_, index) =>
                         _buildRuleItem(rules, index, selectedRules),
                     itemExtent: ruleItemHeight,
                     itemCount: rules.length,
                   )
-                : ReorderableList(
+                : PrismReorderableListView(
                     padding: _listPadding(context),
-                    itemBuilder: (_, index) =>
-                        ReorderableDelayedDragStartListener(
-                          key: ObjectKey(rules[index]),
-                          index: index,
-                          child: _buildRuleItem(rules, index, selectedRules),
-                        ),
+                    itemBuilder: (_, index) => ReorderDragStartListener(
+                      key: ObjectKey(rules[index]),
+                      index: index,
+                      child: _buildRuleItem(rules, index, selectedRules),
+                    ),
                     proxyDecorator: (child, index, animation) =>
                         commonProxyDecorator(
                           _buildRuleItem(rules, index, selectedRules),
@@ -170,7 +170,9 @@ class _AddedRulesViewState extends ConsumerState<AddedRulesView> {
                         ),
                     itemExtent: ruleItemHeight,
                     itemCount: rules.length,
-                    onReorderItem: ref.read(globalRulesProvider.notifier).order,
+                    onReorderItem: (oldIndex, newIndex) => ref
+                        .read(globalRulesProvider.notifier)
+                        .order(oldIndex, newIndex),
                   ),
           ),
         ),
@@ -182,7 +184,7 @@ class _AddedRulesViewState extends ConsumerState<AddedRulesView> {
     16,
     context.contentTopPadding,
     16,
-    16 + BottomInsetScope.of(context),
+    16 + context.bottomInset,
   );
 
   Widget _buildRuleItem(List<Rule> rules, int index, Set<dynamic> selected) {

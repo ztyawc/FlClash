@@ -13,8 +13,8 @@ import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter/foundation.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/intl.dart';
 import 'package:riverpod/riverpod.dart';
@@ -48,6 +48,7 @@ TrayState _trayState({
   bool systemProxy = false,
   bool autoLaunch = false,
   bool showTrayTitle = false,
+  bool monochromeTrayIcon = true,
   bool safeMode = false,
   Mode mode = Mode.rule,
   List<Group> groups = const [],
@@ -63,6 +64,7 @@ TrayState _trayState({
     groups: groups,
     selectedMap: const {},
     showTrayTitle: showTrayTitle,
+    monochromeTrayIcon: monochromeTrayIcon,
     safeMode: safeMode,
     hotKeys: hotKeys,
   );
@@ -238,6 +240,27 @@ void main() {
     expect((arguments['icon'] as Map)['isTemplate'], isTrue);
   });
 
+  test('ships the color status icon once monochrome is off', () async {
+    await update(
+      _trayState(isStart: true, tunEnable: true, monochromeTrayIcon: false),
+    );
+
+    final arguments = showCall()!.arguments as Map;
+    expect((arguments['icon'] as Map)['isTemplate'], isFalse);
+    final reps = ((arguments['icon'] as Map)['reps'] as List).cast<Map>();
+    final base = reps.firstWhere((rep) => rep['scale'] == 1.0);
+    expect(
+      base['bytes'],
+      base64Encode(
+        File('assets/images/tray/unix/status_3.png').readAsBytesSync(),
+      ),
+    );
+    expect(
+      _item(showCall(), currentAppLocalizations.monochromeIcon)['checked'],
+      isFalse,
+    );
+  });
+
   test('skips the platform call when the tray state is unchanged', () async {
     await update(_trayState(isStart: true));
     await update(_trayState(isStart: true));
@@ -390,6 +413,10 @@ void main() {
       expect(
         _labels(showCall()),
         isNot(contains(currentAppLocalizations.speedStatistics)),
+      );
+      expect(
+        _labels(showCall()),
+        isNot(contains(currentAppLocalizations.monochromeIcon)),
       );
       expect(_labels(showCall()), isNot(contains(HotAction.delayTest.label)));
     });

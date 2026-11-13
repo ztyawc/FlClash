@@ -81,7 +81,8 @@ void main() {
           chains: ['JP-02', 'auto'],
           checkedAt: 1700000000000,
           coreEpoch: 7,
-          picksVersion: 42,
+          routeVersion: 42,
+          hits: [RouteHit(host: 'www.netflix.com:443', exit: 'JP-02')],
         ),
       );
 
@@ -91,7 +92,10 @@ void main() {
       expect(check.node, 'JP-02');
       expect(check.chains, ['JP-02', 'auto']);
       expect(check.coreEpoch, 7);
-      expect(check.picksVersion, 42);
+      expect(check.routeVersion, 42);
+      expect(check.hits, const [
+        RouteHit(host: 'www.netflix.com:443', exit: 'JP-02'),
+      ]);
       expect(
         check.checkedAt,
         DateTime.fromMillisecondsSinceEpoch(1700000000000),
@@ -208,7 +212,7 @@ void main() {
     });
 
     test('gives up on an error, an empty body or an unparseable one', () async {
-      final answers = <OutboundIpResult?>[
+      final answers = <OutboundIpResult>[
         const OutboundIpResult(error: 'timeout'),
         const OutboundIpResult(url: 'https://api.country.is'),
         const OutboundIpResult(url: 'https://api.country.is', body: 'garbage'),
@@ -216,13 +220,12 @@ void main() {
           url: 'https://unknown.example',
           body: 'ip=1.2.3.4',
         ),
-        null,
       ];
       when(
         () => core.outboundIp(any()),
       ).thenAnswer((_) async => answers.removeAt(0));
 
-      for (var attempt = 0; attempt < 5; attempt++) {
+      for (var attempt = 0; attempt < 4; attempt++) {
         expect(
           parseOutboundIp(await lookupOutboundIp(controller, 'HK-01')),
           isNull,

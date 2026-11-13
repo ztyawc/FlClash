@@ -1,16 +1,24 @@
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/core/controller.dart';
+import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dns_queries.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 
+import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+
+class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
 const _tableSize = Size(1400, 1000);
 const _listSize = Size(600, 1000);
@@ -44,10 +52,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late ProviderContainer container;
+  late _MockCoreHandlerInterface core;
 
   setUp(() {
+    core = _MockCoreHandlerInterface();
     container = ProviderContainer(
-      overrides: [profilesProvider.overrideWith(TestProfiles.new)],
+      overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
+        coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+      ],
     );
     globalState.container = container;
     container
@@ -289,6 +302,42 @@ void main() {
     await teardownView(tester);
   });
 
+  testWidgets('a wide page pins the offered values as toggles', (tester) async {
+    seedDnsQueries([
+      _dnsQuery('alpha.test'),
+      _dnsQuery('beta.test', type: 'AAAA'),
+      _dnsQuery('gamma.test', cached: true),
+      _dnsQuery('delta.test', rcode: 'NXDOMAIN', answers: const []),
+    ]);
+
+    await pumpDnsQueries(tester);
+
+    for (final label in ['A', 'AAAA', 'Cache', 'NXDOMAIN']) {
+      expect(find.widgetWithText(Chip, label), findsOneWidget);
+    }
+    await tester.tap(find.widgetWithText(Chip, 'AAAA'));
+    await tester.pumpAndSettle();
+    expect(find.text('beta.test'), findsOneWidget);
+    expect(find.text('alpha.test'), findsNothing);
+
+    await tester.tap(find.widgetWithText(Chip, 'AAAA'));
+    await tester.pumpAndSettle();
+    expect(find.text('alpha.test'), findsOneWidget);
+  });
+
+  testWidgets('a query arriving later offers its value', (tester) async {
+    seedDnsQueries([_dnsQuery('alpha.test')]);
+
+    await pumpDnsQueries(tester);
+    expect(find.widgetWithText(Chip, 'AAAA'), findsNothing);
+
+    seedDnsQueries([_dnsQuery('beta.test', type: 'AAAA')]);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.widgetWithText(Chip, 'AAAA'), findsOneWidget);
+  });
+
   testWidgets('tapping a query opens its details', (tester) async {
     seedDnsQueries([
       _dnsQuery(
@@ -363,4 +412,67 @@ void main() {
 
     await teardownView(tester);
   });
+
+  testWidgets('the broom clears the DNS cache and says so', (tester) async {
+    when(core.clearDnsCache).thenAnswer((_) async => true);
+    await pumpDnsQueries(tester);
+
+    await tester.tap(find.byGlyph(AppGlyphs.broom));
+    await tester.pumpAndSettle();
+
+    verify(core.clearDnsCache).called(1);
+    expect(find.text('DNS cache cleared'), findsOneWidget);
+
+    await teardownView(tester);
+  });
+
+  testWidgets('a Core that cannot clear the DNS cache reports it', (
+    tester,
+  ) async {
+    when(core.clearDnsCache).thenThrow(
+      const CoreMethodException(
+        code: 'transport_disconnected',
+        message: 'Core is not running',
+      ),
+    );
+    await pumpDnsQueries(tester);
+
+    await tester.tap(find.byGlyph(AppGlyphs.broom));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Failed to clear DNS cache'), findsOneWidget);
+    expect(find.text('DNS cache cleared'), findsNothing);
+
+    await teardownView(tester);
+  });
+
+  for (final (name, size, rowType) in const [
+    ('list', _listSize, DnsQueryItem),
+    ('table', _tableSize, RecordTableRow),
+  ]) {
+    testWidgets('a full $name builds only the query added', (tester) async {
+      seedDnsQueries([
+        for (var index = 0; index < 500; index++) _dnsQuery('d$index.test'),
+      ]);
+      await pumpDnsQueries(tester, size: size);
+      await tester.pump(const Duration(seconds: 1));
+
+      var built = 0;
+      debugOnRebuildDirtyWidget = (element, _) {
+        if (element.widget.runtimeType == rowType) {
+          built++;
+        }
+      };
+      addTearDown(() => debugOnRebuildDirtyWidget = null);
+      container
+          .read(dnsQueriesProvider.notifier)
+          .addQuery(_dnsQuery('new.test'));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pump();
+      debugOnRebuildDirtyWidget = null;
+
+      expect(built, 1);
+      await teardownView(tester);
+    });
+  }
 }

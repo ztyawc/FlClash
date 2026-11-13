@@ -12,8 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/metacubex/mihomo/adapter/provider"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/constant"
+	cp "github.com/metacubex/mihomo/constant/provider"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -85,7 +87,7 @@ func ruleStrings(cfg *config.Config) []string {
 func TestHandleGetProfileBaseLeavesTheBulkSectionsInTheCore(t *testing.T) {
 	path := writeBaseProfile(t, baseProfile)
 
-	base, err := handleGetProfileBase(path)
+	base, err := handleGetProfileBase(PathParams{Path: path})
 
 	if err != nil {
 		t.Fatalf("handleGetProfileBase = %v", err)
@@ -112,7 +114,7 @@ func TestHandleGetProfileBaseLeavesTheBulkSectionsInTheCore(t *testing.T) {
 func TestHandleGetProfileOutboundsListsOnlyNamesAndTypes(t *testing.T) {
 	path := writeBaseProfile(t, baseProfile)
 
-	outbounds, err := handleGetProfileOutbounds(path)
+	outbounds, err := handleGetProfileOutbounds(PathParams{Path: path})
 
 	if err != nil {
 		t.Fatalf("handleGetProfileOutbounds = %v", err)
@@ -129,7 +131,7 @@ func TestHandleGetProfileOutboundsListsOnlyNamesAndTypes(t *testing.T) {
 func TestHandleBuildProfileWritesTheMergedConfigWhereTheHostReadsSpills(t *testing.T) {
 	withSpillHome(t, responseSpillThreshold)
 	path := writeBaseProfile(t, baseProfile)
-	base, err := handleGetProfileBase(path)
+	base, err := handleGetProfileBase(PathParams{Path: path})
 	if err != nil {
 		t.Fatalf("handleGetProfileBase = %v", err)
 	}
@@ -154,7 +156,7 @@ func TestHandleBuildProfileWritesTheMergedConfigWhereTheHostReadsSpills(t *testi
 
 func TestLoadConfigWithBasePutsTheAddedRulesFirstAndTheOverlayOverTheRest(t *testing.T) {
 	path := writeBaseProfile(t, baseProfile)
-	base, err := handleGetProfileBase(path)
+	base, err := handleGetProfileBase(PathParams{Path: path})
 	if err != nil {
 		t.Fatalf("handleGetProfileBase = %v", err)
 	}
@@ -198,7 +200,7 @@ func TestLoadConfigWithBasePutsTheAddedRulesFirstAndTheOverlayOverTheRest(t *tes
 // profile, and the anchor it was written with sits in a section the overlay drops.
 func TestLoadConfigWithBaseWritesAConfigThatLoadsAlone(t *testing.T) {
 	path := writeBaseProfile(t, baseProfile)
-	base, err := handleGetProfileBase(path)
+	base, err := handleGetProfileBase(PathParams{Path: path})
 	if err != nil {
 		t.Fatalf("handleGetProfileBase = %v", err)
 	}
@@ -222,9 +224,9 @@ func TestLoadConfigWithBaseWritesAConfigThatLoadsAlone(t *testing.T) {
 	if len(reloaded.Proxies) != len(cfg.Proxies) {
 		t.Errorf("reloaded %d proxies, want %d", len(reloaded.Proxies), len(cfg.Proxies))
 	}
-	raw, err := handleGetConfig(configPath)
+	raw, err := readRawConfig(configPath)
 	if err != nil {
-		t.Fatalf("handleGetConfig(config.yaml) = %v", err)
+		t.Fatalf("readRawConfig(config.yaml) = %v", err)
 	}
 	for _, proxy := range raw.Proxy {
 		if proxy["name"] != "b" {
@@ -274,13 +276,105 @@ func TestLoadSetupConfigReadsConfigYamlWithoutABase(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	cfg, err := loadSetupConfig(defaultSetupParams())
+	cfg, err := loadSetupConfig(&SetupParams{})
 
 	if err != nil {
 		t.Fatalf("loadSetupConfig = %v", err)
 	}
 	if got := ruleStrings(cfg); !reflect.DeepEqual(got, []string{"Match,,REJECT"}) {
 		t.Errorf("rules = %v, want config.yaml's", got)
+	}
+}
+
+func TestHandleGetProxyDefinitionReadsTheRunningConfig(t *testing.T) {
+	home := t.TempDir()
+	previous := constant.Path.HomeDir()
+	constant.SetHomeDir(home)
+	t.Cleanup(func() { constant.SetHomeDir(previous) })
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(baseProfile), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	merged, err := handleGetProxyDefinition(NameParams{Name: "a"})
+	if err != nil {
+		t.Fatalf("handleGetProxyDefinition(a) = %v", err)
+	}
+	reality, err := handleGetProxyDefinition(NameParams{Name: "b"})
+	if err != nil {
+		t.Fatalf("handleGetProxyDefinition(b) = %v", err)
+	}
+	group, err := handleGetProxyDefinition(NameParams{Name: "g"})
+	if err != nil {
+		t.Fatalf("handleGetProxyDefinition(g) = %v", err)
+	}
+
+	want := map[string]any{"name": "a", "type": "socks5", "server": "127.0.0.1", "port": 1080}
+	if !reflect.DeepEqual(merged, want) {
+		t.Errorf("definition of a = %v, want %v", merged, want)
+	}
+	if opts, _ := reality["reality-opts"].(map[string]any); opts["short-id"] != "0123" {
+		t.Errorf("reality-opts of b = %v, want short-id kept as the string 0123", reality["reality-opts"])
+	}
+	if group != nil {
+		t.Errorf("definition of group g = %v, want none", group)
+	}
+}
+
+func TestHandleGetProxyDefinitionReadsAProviderProxyAsItsProviderBuildsIt(t *testing.T) {
+	home := t.TempDir()
+	previous := constant.Path.HomeDir()
+	constant.SetHomeDir(home)
+	t.Cleanup(func() { constant.SetHomeDir(previous) })
+	const subscription = `proxies:
+  - {name: a, type: socks5, server: 127.0.0.1, port: 1080}
+  - {name: b, type: socks5, server: 127.0.0.2, port: 1080}
+`
+	const running = `proxy-providers:
+  sub:
+    type: file
+    path: ./sub.yaml
+    exclude-filter: ^a$
+    override: {additional-prefix: "S-", udp: false}
+  inline:
+    type: inline
+    payload:
+      - {name: c, type: socks5, server: 127.0.0.3, port: 1080}
+`
+	for path, content := range map[string]string{"sub.yaml": subscription, "config.yaml": running} {
+		if err := os.WriteFile(filepath.Join(home, path), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	raw, err := readRawConfig(runningConfigPath())
+	if err != nil {
+		t.Fatalf("read running config: %v", err)
+	}
+	providers := map[string]cp.ProxyProvider{}
+	for name, mapping := range raw.ProxyProvider {
+		pd, err := provider.ParseProxyProvider(name, mapping, nil)
+		if err != nil {
+			t.Fatalf("parse provider %s: %v", name, err)
+		}
+		if err := pd.Initial(); err != nil {
+			t.Fatalf("load provider %s: %v", name, err)
+		}
+		t.Cleanup(func() { _ = pd.(interface{ Close() error }).Close() })
+		providers[name] = pd
+	}
+	withTunnelProviders(t, providers, nil)
+
+	for name, want := range map[string]map[string]any{
+		"S-b": {"name": "S-b", "type": "socks5", "server": "127.0.0.2", "port": 1080, "udp": false},
+		"c":   {"name": "c", "type": "socks5", "server": "127.0.0.3", "port": 1080},
+		"a":   nil,
+	} {
+		got, err := handleGetProxyDefinition(NameParams{Name: name})
+		if err != nil {
+			t.Fatalf("handleGetProxyDefinition(%s) = %v", name, err)
+		}
+		if want == nil && got != nil || want != nil && !reflect.DeepEqual(got, want) {
+			t.Errorf("definition of %s = %v, want %v", name, got, want)
+		}
 	}
 }
 

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -10,7 +9,8 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class ClashProvidersView extends ConsumerStatefulWidget {
@@ -151,7 +151,7 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
 
   Future<void> _handleEditorSave(
     String title,
-    String content, {
+    EditorContent content, {
     ClashProvider? provider,
   }) async {
     final appLocalizations = context.appLocalizations;
@@ -165,7 +165,7 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
     }
     if (_reservedLabels(except: provider).contains(label)) {
       unawaited(
-        dialogs.showMessage(
+        dialogs.showAlert(
           message: TextSpan(
             text: appLocalizations.existsTip(appLocalizations.name),
           ),
@@ -175,7 +175,11 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
     }
     final next =
         provider?.copyWith(label: label) ?? ClashProvider.create(label: label);
-    if (!await _put(next, previous: provider, content: utf8.encode(content))) {
+    if (!await _put(
+      next,
+      previous: provider,
+      content: await content.readBytes(),
+    )) {
       return;
     }
     if (mounted) {
@@ -185,16 +189,10 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
 
   Future<bool> _handleEditorPop(
     String title,
-    String content,
-    String raw, {
+    EditorContent content, {
     ClashProvider? provider,
   }) async {
-    if (content == raw && title == (provider?.label ?? '')) {
-      return true;
-    }
-    final res = await dialogs.showMessage(
-      message: TextSpan(text: context.appLocalizations.saveChanges),
-    );
+    final res = await dialogs.showSaveChanges();
     if (res == null) {
       return false;
     }
@@ -206,19 +204,20 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
   }
 
   void _handleToEditor([ClashProvider? provider]) {
-    late final String raw;
     unawaited(
       BaseNavigator.push(
         context,
         EditorPage(
           titleEditable: true,
           title: provider?.label ?? '',
-          load: () async => raw = (await provider?.content) ?? '',
+          load: () async => provider == null
+              ? CodeForgeDocument.fromText('')
+              : openEditorFile(await provider.path),
           schema: EditorSchema.provider,
           onSave: (_, title, content) =>
               _handleEditorSave(title, content, provider: provider),
           onPop: (_, title, content) =>
-              _handleEditorPop(title, content, raw, provider: provider),
+              _handleEditorPop(title, content, provider: provider),
         ),
       ),
     );
@@ -232,8 +231,10 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
         EditorPage(
           title: provider.label,
           load: () async => provider.isTextContent
-              ? (await provider.content) ?? ''
-              : core.dumpRuleSet(await provider.path),
+              ? openEditorFile(await provider.path)
+              : CodeForgeDocument.fromText(
+                  await core.dumpRuleSet(await provider.path),
+                ),
           schema: EditorSchema.provider,
         ),
       ),
@@ -268,12 +269,12 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
   bool _isEditable(ClashProvider provider) =>
       !provider.isRemote && provider.isTextContent;
 
-  List<CommonPopupMenuItem> _buildMenuItems(ClashProvider provider) {
+  List<PopupMenuItem> _buildMenuItems(ClashProvider provider) {
     final appLocalizations = context.appLocalizations;
     final editable = _isEditable(provider);
     return [
       if (editable)
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.compose,
           label: appLocalizations.edit,
           onPressed: () {
@@ -281,7 +282,7 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
           },
         ),
       if (!provider.isTextContent)
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.eye,
           label: appLocalizations.preview,
           onPressed: () {
@@ -289,21 +290,21 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
           },
         ),
       if (provider.isRemote)
-        CommonPopupMenuItem(
+        PopupMenuItem(
           glyph: AppGlyphs.sync,
           label: appLocalizations.sync,
           onPressed: () {
             _put(provider, previous: provider, refresh: true);
           },
         ),
-      CommonPopupMenuItem(
+      PopupMenuItem(
         glyph: AppGlyphs.settings,
         label: appLocalizations.options,
         onPressed: () {
           _handleEditOptions(provider);
         },
       ),
-      CommonPopupMenuItem(
+      PopupMenuItem(
         danger: true,
         glyph: AppGlyphs.delete,
         label: appLocalizations.delete,
@@ -359,11 +360,11 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
         illustration: NullStatusIllustration.rules,
         label: appLocalizations.nullTip(appLocalizations.ruleProviders),
       ),
-      child: ReorderableListView.builder(
-        padding: const EdgeInsets.all(
-          16,
-        ).copyWith(top: context.contentTopPadding),
-        buildDefaultDragHandles: false,
+      child: PrismReorderableListView(
+        padding: const EdgeInsets.all(16).copyWith(
+          top: context.contentTopPadding,
+          bottom: 16 + context.bottomInset,
+        ),
         itemCount: providers.length,
         itemBuilder: (_, index) => _buildItem(providers, index),
         proxyDecorator: (_, index, animation) {
@@ -383,11 +384,11 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
     final appLocalizations = context.appLocalizations;
     final state = ref.watch(clashProvidersProvider);
     final providers = state.value ?? [];
-    return CommonScaffold(
+    return Scaffold(
       canSort: providers.length > 1,
       isLoading: ref.watch(loadingProvider(LoadingTag.ruleProviders)),
       actions: [
-        CommonPopupBox(
+        PopupAnchor(
           targetBuilder: (open) {
             return IconButton(
               tooltip: appLocalizations.add,
@@ -395,19 +396,19 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
               icon: const GlyphIcon(AppGlyphs.addCircle),
             );
           },
-          popupBuilder: (_) => CommonPopupMenu(
+          popupBuilder: (_) => PopupMenu(
             items: [
-              CommonPopupMenuItem(
+              PopupMenuItem(
                 glyph: AppGlyphs.compose,
                 label: appLocalizations.startFromScratch,
                 onPressed: _handleToEditor,
               ),
-              CommonPopupMenuItem(
+              PopupMenuItem(
                 glyph: AppGlyphs.cloudDownload,
                 label: appLocalizations.importUrl,
                 onPressed: _handleImportFromUrl,
               ),
-              CommonPopupMenuItem(
+              PopupMenuItem(
                 glyph: AppGlyphs.importFile,
                 label: appLocalizations.importFile,
                 onPressed: _handleImportFromFile,

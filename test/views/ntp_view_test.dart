@@ -9,12 +9,13 @@ import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/config/ntp.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 const _profileId = 1;
 
@@ -143,7 +144,7 @@ void main() {
 
     await addKey(tester, currentAppLocalizations.writeToSystem);
 
-    expect(find.byType(CommonDialog), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
     expect(config().ntpOverrideKeys, {NtpOverrideKey.writeToSystem});
     expect(config().ntp.writeToSystem, defaultNtp.writeToSystem);
   });
@@ -178,7 +179,7 @@ void main() {
 
     double heightOf(String title) => tester
         .getSize(
-          find.ancestor(of: find.text(title), matching: find.byType(ListTile)),
+          find.ancestor(of: find.text(title), matching: find.byType(ListRow)),
         )
         .height;
     expect(config().ntp.dialerProxy, isEmpty);
@@ -239,7 +240,7 @@ void main() {
 
     await tester.tap(
       find.descendant(
-        of: find.ancestor(of: status, matching: find.byType(ListTile)),
+        of: find.ancestor(of: status, matching: find.byType(ListRow)),
         matching: find.byTooltip(currentAppLocalizations.remove),
       ),
     );
@@ -334,7 +335,11 @@ void main() {
     expect(editor.readOnly, isFalse);
 
     final context = tester.element(find.byType(EditorPage));
-    final popped = await editor.onPop!(context, 'NTP', 'port: 1230');
+    final popped = await editor.onPop!(
+      context,
+      'NTP',
+      const EditorContent.text('port: 1230'),
+    );
     expect(popped, isTrue);
     expect(config().ntpOverrideKeys, {NtpOverrideKey.port});
     expect(config().ntp.port, 1230);
@@ -362,7 +367,11 @@ void main() {
     final editor = await openQuickEdit(tester);
     final context = tester.element(find.byType(EditorPage));
     expect(
-      await editor.onPop!(context, 'NTP', "enable: true\nserver: ''\n"),
+      await editor.onPop!(
+        context,
+        'NTP',
+        const EditorContent.text("enable: true\nserver: ''\n"),
+      ),
       isTrue,
     );
     expect(config().ntpOverrideKeys, {NtpOverrideKey.enable});
@@ -378,7 +387,14 @@ void main() {
     expect(editor.content, isNot(contains('dialer-proxy')));
 
     final context = tester.element(find.byType(EditorPage));
-    expect(await editor.onPop!(context, 'NTP', 'enable: true'), isTrue);
+    expect(
+      await editor.onPop!(
+        context,
+        'NTP',
+        const EditorContent.text('enable: true'),
+      ),
+      isTrue,
+    );
     expect(config().ntpOverrideKeys, {
       NtpOverrideKey.enable,
       NtpOverrideKey.dialerProxy,
@@ -393,7 +409,12 @@ void main() {
     final editor = await openQuickEdit(tester);
     final context = tester.element(find.byType(EditorPage));
 
-    final popped = editor.onPop!(context, 'NTP', 'bogus: 1');
+    final popped = editor.onPop!(
+      context,
+      'NTP',
+      const EditorContent.text('bogus: 1'),
+    );
+    await tester.pump();
     await tester.pump();
     expect(
       find.textContaining(currentAppLocalizations.discardChanges),

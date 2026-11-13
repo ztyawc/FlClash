@@ -42,7 +42,8 @@ func releaseGeoUpdate(geoType string) {
 	releaseUpdate(geoUpdateScope + geoType)
 }
 
-func handleUpdateGeoData(geoType string) error {
+func handleUpdateGeoData(params GeoUpdateParams) error {
+	geoType := params.Type
 	resource, exist := geoResources[geoType]
 	if !exist {
 		logError("updateGeoData: unknown geo resource %q", geoType)
@@ -67,7 +68,7 @@ func onGeoUpdate(geoType string, updating bool, skipped bool, updateErr error) {
 		releaseHookUpdate(geoUpdateScope + geoType)
 		scheduleReclaimOwnership()
 		if !skipped && updateErr == nil {
-			bumpRouteEpoch()
+			changeRoute(routeMoved)
 		}
 	}
 	status := GeoUpdateStatus{Type: geoType, Updating: updating, Skipped: skipped}

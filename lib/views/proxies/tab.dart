@@ -6,7 +6,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/common.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/widgets/widgets.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'card.dart';
@@ -189,7 +189,10 @@ class ProxiesTabViewState extends ConsumerState<ProxiesTabView>
               child: Column(
                 children: [
                   Padding(
-                    padding: const EdgeInsets.only(top: 4, bottom: 16),
+                    padding: EdgeInsets.only(
+                      top: context.contentTopPadding - context.appBarInset,
+                      bottom: 16,
+                    ),
                     child: GroupTabs(controller: controller, groups: groups),
                   ),
                   Expanded(
@@ -250,7 +253,7 @@ class ProxyGroupView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final proxies = group.all;
-    return CommonScrollBar(
+    return Scrollbar(
       controller: controller,
       thumbVisibility: true,
       child: GridView.builder(
@@ -259,7 +262,7 @@ class ProxyGroupView extends ConsumerWidget {
         padding: EdgeInsets.only(
           left: 16,
           right: 16,
-          bottom: 16 + BottomInsetScope.of(context),
+          bottom: 16 + context.bottomInset,
         ),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,

@@ -4,12 +4,13 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/system_dns.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/providers/mitm.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/widgets/icon.dart';
 import 'package:flutter/foundation.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class AppStateManager extends ConsumerStatefulWidget {
@@ -89,6 +90,10 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     _updateVisible(state);
     if (state == AppLifecycleState.resumed) {
       unawaited(ref.read(locationPermissionsProvider.notifier).refresh());
+      // A certificate removed meanwhile stops decryption before the next start.
+      if (mitmFeature && ref.read(patchClashConfigProvider).mitm.enable) {
+        unawaited(ref.read(mitmTrustStateProvider.notifier).refresh());
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
@@ -220,7 +225,7 @@ class AppSidebarContainer extends ConsumerWidget {
     final navigationItems = navigationState.navigationItems;
     final viewMode = navigationState.viewMode;
     final currentIndex = navigationState.currentIndex;
-    final blur = ref.watch(windowBlurProvider);
+    final backdropOpacity = ref.watch(windowBlurProvider);
     final page = SurfaceLevel.page.colorOf(context.colorScheme);
     final chrome = context.colorScheme.chromeSurface;
     void onSelected(int index) {
@@ -230,14 +235,14 @@ class AppSidebarContainer extends ConsumerWidget {
     final hasSidebar = viewMode != ViewMode.mobile;
     final isLtr = Directionality.of(context) == TextDirection.ltr;
     return Container(
-      color: blur ? Colors.transparent : page,
+      color: backdropOpacity != null ? Colors.transparent : page,
       child: Row(
         children: [
           AnimatedVisibility.sidebar(
             visible: hasSidebar,
-            child: Material(
-              color: blur
-                  ? chrome.withValues(alpha: kSidebarBlurOpacity)
+            child: Surface(
+              color: backdropOpacity != null
+                  ? chrome.withValues(alpha: backdropOpacity)
                   : chrome,
               shape: BorderDirectional(end: Divider.createBorderSide(context)),
               child: MediaQuery.removePadding(

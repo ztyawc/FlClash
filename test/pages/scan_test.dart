@@ -3,15 +3,13 @@ import 'dart:async';
 import 'package:fl_clash/common/app_localizations.dart';
 import 'package:fl_clash/pages/scan.dart';
 import 'package:fl_clash/providers/config.dart';
-import 'package:fl_clash/ui/activate_box.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
-import 'package:fl_clash/ui/null_status.dart';
-import 'package:fl_clash/ui/surface.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:prism_ui/prism_ui.dart';
 
 import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
@@ -25,11 +23,13 @@ class _FakeScannerPlatform extends MobileScannerPlatform {
 
   int startCalls = 0;
   int stopCalls = 0;
+  int pauseCalls = 0;
   int disposeCalls = 0;
   int toggleTorchCalls = 0;
   TorchState initialTorchState = TorchState.off;
   MobileScannerException? startError;
   Completer<void>? startGate;
+  Completer<void>? pauseGate;
 
   void emit(BarcodeCapture capture) => _barcodes.add(capture);
 
@@ -72,6 +72,12 @@ class _FakeScannerPlatform extends MobileScannerPlatform {
   @override
   Future<void> stop() async {
     stopCalls++;
+  }
+
+  @override
+  Future<void> pause() async {
+    pauseCalls++;
+    await pauseGate?.future;
   }
 
   @override
@@ -150,16 +156,14 @@ void main() {
       unawaited(
         navigator
             .push<void>(
-              MaterialPageRoute<void>(builder: (_) => const Text('below')),
+              HostPageRoute<void>(builder: (_) => const Text('below')),
             )
             .then((_) => onBelowPopped()),
       );
     }
     unawaited(
       navigator
-          .push<String>(
-            MaterialPageRoute<String>(builder: (_) => const ScanPage()),
-          )
+          .push<String>(HostPageRoute<String>(builder: (_) => const ScanPage()))
           .then(onPopped),
     );
     await tester.pump();
@@ -396,6 +400,75 @@ void main() {
 
       expect(find.byType(ScanPage), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('ScanPage leaving', () {
+    testWidgets('the close button pauses the camera before the page leaves', (
+      tester,
+    ) async {
+      final gate = Completer<void>();
+      platform.pauseGate = gate;
+      var popped = false;
+      await pumpScanPage(tester, onPopped: (_) => popped = true);
+
+      await tester.tap(find.byTooltip(currentAppLocalizations.close));
+      await tester.pump();
+
+      expect(platform.pauseCalls, 1);
+      expect(popped, isFalse);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(popped, isTrue);
+      expect(find.byType(ScanPage), findsNothing);
+    });
+
+    testWidgets('a back while the camera runs pauses it first', (tester) async {
+      final gate = Completer<void>();
+      platform.pauseGate = gate;
+      var popped = false;
+      await pumpScanPage(tester, onPopped: (_) => popped = true);
+      final context = tester.element(find.byType(ScanPage));
+
+      expect(
+        ModalRoute.of(context)!.popDisposition,
+        RoutePopDisposition.doNotPop,
+      );
+
+      unawaited(Navigator.of(context).maybePop());
+      await tester.pump();
+
+      expect(platform.pauseCalls, 1);
+      expect(popped, isFalse);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(popped, isTrue);
+    });
+
+    testWidgets('a captured code leaves on the last frame', (tester) async {
+      await pumpScanPage(tester, onPopped: (_) {});
+
+      platform.emit(
+        _capture(type: BarcodeType.url, rawValue: 'https://sub.example/x'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final cover = tester.widget<AnimatedOpacity>(
+        find.ancestor(
+          of: find.byWidgetPredicate(
+            (widget) => widget is ColoredBox && widget.color == Colors.black,
+          ),
+          matching: find.byType(AnimatedOpacity),
+        ),
+      );
+      expect(find.byType(ScanPage), findsOneWidget);
+      expect(cover.opacity, 0);
+      expect(platform.pauseCalls, 1);
     });
   });
 
@@ -688,7 +761,7 @@ void main() {
       final settings = tester.getRect(
         find.ancestor(
           of: find.text(currentAppLocalizations.settings),
-          matching: find.bySubtype<FilledButton>(),
+          matching: find.byType(FilledButton),
         ),
       );
       final close = tester.getRect(
@@ -763,15 +836,14 @@ void main() {
         tester.element(
           find.descendant(
             of: find.byType(ScanPage),
-            matching: find.byType(Scaffold),
+            matching: find.byType(AppBar),
           ),
         ),
       );
       expect(theme.brightness, Brightness.dark);
       expect(theme.colorScheme.surface, Colors.black);
-      expect(theme.extension<ElevatedColorScheme>(), isNotNull);
-      expect(theme.textTheme.bodyMedium!.fontFamily, 'Inter');
-      expect(theme.actionIconTheme?.backButtonIconBuilder, isNotNull);
+      expect(theme.elevatedColorScheme, isNotNull);
+      expect(theme.bodyTextStyle.fontFamily, 'Inter');
     });
   });
 }

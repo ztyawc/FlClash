@@ -1,9 +1,8 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/rendering.dart';
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:super_sliver_list/super_sliver_list.dart';
 
 class SelectionSection<T> {
   final String? label;
@@ -135,6 +134,14 @@ class _SelectionSheetState<T> extends ConsumerState<SelectionSheet<T>>
     return sections.where((section) => section.items.isNotEmpty).toList();
   }
 
+  int? _indexOf(SelectionSection<T> section, Key key) {
+    if (key is! ValueKey<T>) {
+      return null;
+    }
+    final index = section.items.indexOf(key.value);
+    return index == -1 ? null : index;
+  }
+
   int _countOf(List<SelectionSection<T>> sections) =>
       sections.fold(0, (value, section) => value + section.items.length);
 
@@ -207,13 +214,10 @@ class _SelectionSheetState<T> extends ConsumerState<SelectionSheet<T>>
   }
 
   Widget _buildHeader(SelectionSection<T> section) {
-    final header = Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: ListHeader(
-        title: section.label!,
-        padding: baseInfoEdgeInsetsOf(context),
-      ),
-    );
+    final label = section.label;
+    final header = label != null
+        ? ListHeader(title: label)
+        : const ListSectionGap();
     if (!widget.removeOnSelect) {
       return header;
     }
@@ -259,6 +263,7 @@ class _SelectionSheetState<T> extends ConsumerState<SelectionSheet<T>>
       return row;
     }
     return EntryTransition(
+      key: ValueKey(item),
       animation: _transitions.animationOf(item),
       leaving: _transitions.isLeaving(item),
       child: row,
@@ -286,7 +291,7 @@ class _SelectionSheetState<T> extends ConsumerState<SelectionSheet<T>>
     final searchable =
         _query.isNotEmpty ||
         _countOf(widget.sections) >= sheetSearchMinItemCount;
-    return CommonScaffold(
+    return Scaffold(
       title: widget.title,
       searchState: searchable
           ? AppBarSearchState(onSearch: _handleSearch)
@@ -298,26 +303,31 @@ class _SelectionSheetState<T> extends ConsumerState<SelectionSheet<T>>
               count == 0 && (widget.emptyLabel != null || _query.isNotEmpty),
           isSearching: _query.isNotEmpty,
           loadingStatus: loadingStatus,
-          nullStatus: NullStatus(label: widget.emptyLabel ?? ''),
+          nullStatus: NullStatus(
+            label: widget.emptyLabel ?? '',
+            illustration: NullStatusIllustration.data,
+          ),
           child: CustomScrollView(
             controller: _controller,
             slivers: [
               SliverToBoxAdapter(
-                child: SizedBox(height: context.contentTopPadding),
+                child: SizedBox(height: context.sectionsTopPadding),
               ),
               for (final (sectionIndex, section) in sections.indexed) ...[
-                if (section.label != null)
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: SliverToBoxAdapter(child: _buildHeader(section)),
-                  ),
                 SliverPadding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  sliver: SuperSliverList.builder(
+                  sliver: SliverToBoxAdapter(child: _buildHeader(section)),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  sliver: SliverPrismList(
                     listController: sectionIndex == location?.section
                         ? _revealController
                         : null,
                     itemCount: section.items.length,
+                    findChildIndexCallback: widget.removeOnSelect
+                        ? (key) => _indexOf(section, key)
+                        : null,
                     itemBuilder: (context, index) {
                       final item = section.items[index];
                       return _buildItem(
@@ -335,7 +345,7 @@ class _SelectionSheetState<T> extends ConsumerState<SelectionSheet<T>>
                 ),
               ],
               SliverToBoxAdapter(
-                child: SizedBox(height: 20 + BottomInsetScope.of(context)),
+                child: SizedBox(height: 20 + context.bottomInset),
               ),
             ],
           ),

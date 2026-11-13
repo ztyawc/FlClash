@@ -82,6 +82,32 @@ String _unquote(String value) {
   return value;
 }
 
+/// Keeps each line whole: a rewrite rule's commas and quotes are its own.
+ParsedInput<String> parseLineInput(
+  String text, {
+  Set<String> existing = const {},
+}) {
+  final entries = <String>[];
+  final seen = <String>{};
+  var skippedExisting = 0;
+  for (final line in text.split(_lineSeparator)) {
+    final value = line.trim();
+    if (value.isEmpty || !seen.add(value)) {
+      continue;
+    }
+    if (existing.contains(value)) {
+      skippedExisting++;
+      continue;
+    }
+    entries.add(value);
+  }
+  return ParsedInput(
+    entries: entries,
+    skippedExisting: skippedExisting,
+    issues: const [],
+  );
+}
+
 ParsedInput<String> parseListInput(
   String text, {
   Set<String> existing = const {},
@@ -224,7 +250,10 @@ ParsedInput<MapEntry<String, String>> parseMapInput(
   Set<String> existingKeys = const {},
   int? keyMaxLength,
   int? valueMaxLength,
+  bool ignoreKeyCase = false,
 }) {
+  String foldKey(String key) => ignoreKeyCase ? key.toLowerCase() : key;
+  final takenKeys = existingKeys.map(foldKey).toSet();
   final entries = <MapEntry<String, String>>[];
   final issues = <InputIssue>[];
   final seen = <String>{};
@@ -266,10 +295,11 @@ ParsedInput<MapEntry<String, String>> parseMapInput(
       );
       continue;
     }
-    if (!seen.add(entry.key)) {
+    final key = foldKey(entry.key);
+    if (!seen.add(key)) {
       continue;
     }
-    if (existingKeys.contains(entry.key)) {
+    if (takenKeys.contains(key)) {
       skippedExisting++;
       continue;
     }
