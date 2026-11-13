@@ -24,12 +24,17 @@ proxy. Credentials are never built into the core.
 
 ## Builds and updates
 
-This repository also includes QyProxy primary/CN2/CN2 download support.
-See [README.md](README.md) for builds and [QYPROXY.md](QYPROXY.md) for its fields.
+This repository also includes QyProxy primary/CN2/CN2 download, UU custom SNI,
+and VK S6 download TCP support. See [README.md](README.md) for the feature matrix,
+builds, protocol limits, and verification status.
 
 The built-in core upgrade is disabled to preserve the custom protocols.
-This repository runs tests and a Windows cross-build in GitHub Actions; it does
-not automatically merge upstream or publish releases.
+GitHub Actions runs tests and Windows/Android cross-builds. Version tags trigger
+the multi-platform release workflow, including tests, Linux amd64 / Windows amd64 /
+Android arm64 builds, Linux example configuration checks, and GZ/ZIP/SHA256SUMS
+publication. Version v0.1.3 includes VK S6 alongside QyProxy, CMCC, and UU SNI on
+all three platforms. Android artifacts are CLI executables, not APKs. Upstream
+changes are not merged automatically.
 
 Optional live tests use environment variables supplied locally. No live
 credentials are stored in this repository or configured in its CI.
