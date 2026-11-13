@@ -1,4 +1,4 @@
-name: Test QyProxy, CMCC and UU SNI
+name: Test QyProxy, CMCC, UU SNI and VK S6
 
 on:
   push:
@@ -31,14 +31,16 @@ jobs:
           cache: true
       - name: Test
         run: go test ./...
-      - name: Test QyProxy, CMCC and UU SNI with gVisor
-        run: go test -tags with_gvisor ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
-      - name: Test UU SNI with race detector
+      - name: Test custom protocols with gVisor
+        run: go test -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+      - name: Test UU SNI and VK S6 with race detector
         env:
           CGO_ENABLED: "1"
         run: |
           go test -race ./transport/uusni
           go test -race ./adapter ./adapter/outbound ./common/convert -run UUSNI
+          go test -race ./transport/vks6
+          go test -race ./adapter ./adapter/outbound -run VKS6
       - name: Build Windows amd64
         env:
           CGO_ENABLED: "0"

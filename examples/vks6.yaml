@@ -1,0 +1,31 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+
+dns:
+  enable: true
+  enhanced-mode: redir-host
+  nameserver:
+    - https://cloudflare-dns.com/dns-query
+
+proxies:
+  - name: VK 下载华东
+    type: vk-s6
+    server: 61.172.165.150
+    port: 8050
+    port-end: 8150
+    username: "CURRENT_SESSION_USERNAME"
+    password: "CURRENT_SESSION_PASSWORD"
+    udp: false
+
+proxy-groups:
+  - name: 下载测试
+    type: select
+    proxies: [VK 下载华东, DIRECT]
+
+rules:
+  - DOMAIN,dl.google.com,下载测试
+  - DOMAIN,speed.cloudflare.com,下载测试
+  - MATCH,DIRECT
