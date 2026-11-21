@@ -37,7 +37,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.47.6"
+  FLUTTER_VERSION: "3.50.0"
   GO_VERSION: "1.27.1"
   FLCLASH_SPECIAL_EDITION: "true"
 
@@ -136,6 +136,11 @@ jobs:
       - name: Set up libclang for Rust bindings
         run: bash tool/setup_libclang.sh
 
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev
+
       - name: Validate Go wrapper
         working-directory: core
         env:
@@ -156,8 +161,8 @@ jobs:
 
       - name: Build Android arm64 APK
         env:
-          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: dart setup.dart android --env stable --arch arm64 -v
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: dart tool/package.dart android --env stable --arch arm64 -v
 
       - name: Verify and checksum APKs
         shell: bash

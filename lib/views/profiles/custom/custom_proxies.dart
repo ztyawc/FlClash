@@ -1161,9 +1161,10 @@ class _EditCustomProxyViewState extends ConsumerState<_EditCustomProxyView> {
   }
 
   Future<void> _handleSelectType() async {
+    final capabilities = ref.read(coreCapabilitiesStateProvider);
     final res = await _selectChoice(
       title: context.appLocalizations.proxyType,
-      items: customProxyTypes,
+      items: customProxyTypes.where(capabilities.supportsProxyType).toList(),
       selectedOf: (state) => state.type,
     );
     if (res == null) {
@@ -1175,7 +1176,12 @@ class _EditCustomProxyViewState extends ConsumerState<_EditCustomProxyView> {
   Future<void> _handleSelectChoice(ProxyField field) async {
     final res = await _selectChoice(
       title: field.label(context.appLocalizations),
-      items: ref.read(customProxyProvider).choicesOf(field),
+      items: ref
+          .read(coreCapabilitiesStateProvider)
+          .supportedChoices(
+            field,
+            ref.read(customProxyProvider).choicesOf(field),
+          ),
       selectedOf: (state) => state.valueOf(field)?.toString(),
     );
     if (res == null) {
