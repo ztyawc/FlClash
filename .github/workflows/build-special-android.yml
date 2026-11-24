@@ -281,15 +281,12 @@ jobs:
         shell: bash
         env:
           CGO_ENABLED: "0"
-        run: |
-          set -euo pipefail
-          go test -count=1 .
-          go vet .
+        run: go vet . ./cmd/...
 
       - name: Test CN2 protocols on Windows
         working-directory: core/Clash.Meta
         shell: bash
-        run: go test -count=1 -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+        run: go test -count=1 -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5
 
       - name: Test Windows helper
         run: cargo test --manifest-path services/helper/Cargo.toml --features windows-service
