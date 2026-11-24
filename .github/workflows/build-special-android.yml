@@ -1,4 +1,4 @@
-name: Build special Android
+name: Build special edition
 
 on:
   push:
@@ -20,7 +20,7 @@ on:
         required: false
         type: string
       publish:
-        description: Publish the verified APKs
+        description: Publish the verified release assets
         default: true
         type: boolean
     secrets:
@@ -68,17 +68,19 @@ jobs:
           short_sha="$(git rev-parse --short=8 HEAD)"
           tag="special-${version//+/-}-${short_sha}"
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]] && \
-             gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+             assets="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null)" && \
+             grep -q '\.apk$' <<< "$assets" && \
+             grep -q -- '-windows-amd64-setup\.exe$' <<< "$assets"; then
             echo "should-build=false" >> "$GITHUB_OUTPUT"
           else
             echo "should-build=true" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  build-android:
     needs: release-state
     if: needs.release-state.outputs.should-build == 'true'
     permissions:
-      contents: write
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out the requested revision
@@ -159,6 +161,17 @@ jobs:
       - name: Run Flutter tests
         run: bash tool/test_special_flutter.sh
 
+      - name: Fetch CA certificates for Android
+        shell: bash
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          set -euo pipefail
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
       - name: Build Android arm64 APK
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -201,7 +214,7 @@ jobs:
         if: always()
         run: python3 tool/special_android_signing.py clean
 
-      - name: Upload workflow artifact
+      - name: Upload Android workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: FlClash-special-android-${{ github.run_id }}
@@ -212,37 +225,187 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  build-windows:
+    needs: release-state
+    if: needs.release-state.outputs.should-build == 'true'
+    permissions:
+      contents: read
+    runs-on: windows-2022
+    steps:
+      - name: Enable git long paths
+        run: git config --global core.longpaths true
+
+      - name: Check out the requested revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+          submodules: recursive
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: core/go.sum
+
+      - name: Set up Rust for Windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          rust_version="$(sed -n 's/^channel = "\(.*\)"$/\1/p' plugins/rust_api/rust/rust-toolchain.toml)"
+          test -n "$rust_version"
+          rustup toolchain install "$rust_version" --profile minimal --target x86_64-pc-windows-msvc
+
+      - name: Set up Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: special-windows-amd64
+          workspaces: |
+            services/helper
+            plugins/rust_api/rust
+          cache-directories: .dart_tool/hooks_runner
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Validate Go wrapper on Windows
+        working-directory: core
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go test -count=1 .
+          go vet .
+
+      - name: Test CN2 protocols on Windows
+        working-directory: core/Clash.Meta
+        shell: bash
+        run: go test -count=1 -tags with_gvisor ./transport/vks6 ./transport/uusni ./transport/qyproxy ./transport/socks5 ./adapter ./adapter/outbound ./common/convert ./component/updater
+
+      - name: Test Windows helper
+        run: cargo test --manifest-path services/helper/Cargo.toml --features windows-service
+
+      - name: Fetch CA certificates for Windows
+        shell: bash
+        env:
+          CA_BUNDLE: cacert-2026-09-25.pem
+          CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
+        run: |
+          set -euo pipefail
+          bundle=core/Clash.Meta/component/ca/ca-certificates.crt
+          curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
+          echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
+
+      - name: Build Windows x64 installer
+        run: dart tool/package.dart windows --env stable --arch amd64 --targets exe -v
+
+      - name: Verify Windows installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq '"APP_ENV"[[:space:]]*:[[:space:]]*"stable"' env.json
+          bundle_dir="build/windows/x64/runner/Release"
+          for required in FlClash.exe FlClashCore.exe FlClashHelperService.exe rust_api.dll EnableLoopback.exe manifest.json; do
+            test -s "$bundle_dir/$required"
+          done
+          mapfile -t zips < <(find dist -maxdepth 1 -type f -name '*.zip' -print)
+          if [[ "${#zips[@]}" -ne 0 ]]; then
+            printf 'Expected no portable ZIP artifacts, found %s\n' "${#zips[@]}"
+            exit 1
+          fi
+          mapfile -t installers < <(find dist -maxdepth 1 -type f -name '*-windows-amd64-setup.exe' -print | sort)
+          if [[ "${#installers[@]}" -ne 1 ]]; then
+            printf 'Expected 1 Windows x64 installer EXE, found %s\n' "${#installers[@]}"
+            find dist -maxdepth 1 -type f -print
+            exit 1
+          fi
+          magic="$(head -c 2 "${installers[0]}")"
+          test "$magic" = "MZ"
+
+      - name: Upload Windows workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FlClash-special-windows-${{ github.run_id }}
+          path: dist/*-windows-amd64-setup.exe
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    needs:
+      - build-android
+      - build-windows
+    if: toJSON(inputs.publish) != 'false'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the requested revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.sha }}
+
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FlClash-special-android-${{ github.run_id }}
+          path: dist
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FlClash-special-windows-${{ github.run_id }}
+          path: dist
+
       - name: Create or refresh the stable release
-        if: toJSON(inputs.publish) != 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          mapfile -t apks < <(find dist -maxdepth 1 -type f -name '*.apk' -printf '%f\n' | sort)
+          mapfile -t installers < <(find dist -maxdepth 1 -type f -name '*-windows-amd64-setup.exe' -printf '%f\n' | sort)
+          test "${#apks[@]}" -eq 1
+          test "${#installers[@]}" -eq 1
+          test -s dist/SIGNING_CERTIFICATE_SHA256
+          (
+            cd dist
+            sha256sum "${apks[@]}" "${installers[@]}" > SHA256SUMS
+          )
           version="$(sed -n 's/^version: //p' pubspec.yaml | head -n 1)"
           commit_sha="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=8 HEAD)"
-          core_sha="$(git -C core/Clash.Meta rev-parse --short=12 HEAD)"
+          core_sha="$(git ls-tree HEAD core/Clash.Meta | awk '$1 == "160000" { print substr($3, 1, 12) }')"
+          test -n "$core_sha"
           tag="special-${version//+/-}-${short_sha}"
           notes="${RUNNER_TEMP}/special-release.md"
           {
             printf 'FlClash（特供版）正式版自动构建。\n\n'
-            printf -- '- Android 架构：`arm64-v8a`\n'
-            printf -- '- 应用 ID：`com.follow.clash.dev`，可与官方版共存\n'
+            printf -- '- Android 产物：`arm64-v8a` APK（应用 ID：`com.follow.clash.dev`，可与官方版共存）\n'
+            printf -- '- Windows 产物：`x64` 安装版 `.exe`\n'
             printf -- '- FlClash：`%s`\n' "$commit_sha"
             printf -- '- mihomo-cn2 内核：`%s`\n' "$core_sha"
             printf -- '- 内核来源：ztyawc/mihomo-cn2，包含 FlClash 接口适配\n'
             printf -- '- 魔改协议：VK S6、UU SNI、QyProxy、CMCC SOCKS5\n'
-            printf -- '- 签名：固定发布证书（RSA 3072）\n'
-            printf -- '- 证书 SHA-256：`%s`\n\n' "$(cat dist/SIGNING_CERTIFICATE_SHA256)"
-            printf '从临时 debug 签名版本切换时，请先导出配置再卸载旧版；此后的固定签名版本可覆盖更新。\n'
+            printf -- '- Android 签名：固定发布证书（RSA 3072），证书 SHA-256：`%s`\n\n' "$(cat dist/SIGNING_CERTIFICATE_SHA256)"
+            printf 'Android 从临时 debug 签名版本切换时，请先导出配置再卸载旧版；此后的固定签名版本可覆盖更新。\n'
           } > "$notes"
 
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --title "FlClash 特供版 ${version}" --notes-file "$notes" --prerelease=false --latest
-            gh release upload "$tag" dist/*.apk dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 --clobber
+            gh release upload "$tag" dist/*.apk dist/*-windows-amd64-setup.exe dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 --clobber
           else
-            gh release create "$tag" dist/*.apk dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 \
+            gh release create "$tag" dist/*.apk dist/*-windows-amd64-setup.exe dist/SHA256SUMS dist/SIGNING_CERTIFICATE_SHA256 \
               --target "$commit_sha" \
               --title "FlClash 特供版 ${version}" \
               --notes-file "$notes" \

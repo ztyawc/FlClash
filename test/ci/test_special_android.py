@@ -103,6 +103,79 @@ class SpecialAndroidTest(unittest.TestCase):
                 self.assertEqual(arguments[arguments.index('--env') + 1], 'stable')
                 self.assertEqual(arguments[arguments.index('--arch') + 1], 'arm64')
 
+    def test_windows_build_uses_stable_amd64_exe_only(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            dart = root / 'dart'
+            dart.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            dart.chmod(0o755)
+            script = workflow_script('build-special-android.yml', 'Build Windows x64 installer')
+            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
+                                    cwd=root, env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'},
+                                    check=True, capture_output=True, text=True)
+            arguments = result.stdout.splitlines()
+            self.assertEqual(arguments[:2], ['tool/package.dart', 'windows'])
+            self.assertEqual(arguments[arguments.index('--env') + 1], 'stable')
+            self.assertEqual(arguments[arguments.index('--arch') + 1], 'amd64')
+            self.assertEqual(arguments[arguments.index('--targets') + 1], 'exe')
+
+    def verify_windows_installer(self, channel='stable', missing_runtime=None,
+                                 extra_zip=False, installer_bytes=b'MZinstaller'):
+        script = workflow_script('build-special-android.yml', 'Verify Windows installer')
+        with tempfile.TemporaryDirectory(prefix='flclash-win-test-') as folder:
+            root = Path(folder)
+            (root / 'env.json').write_text(json.dumps({'APP_ENV': channel}))
+            bundle = root / 'build/windows/x64/runner/Release'
+            bundle.mkdir(parents=True)
+            for name in ('FlClash.exe', 'FlClashCore.exe', 'FlClashHelperService.exe',
+                         'rust_api.dll', 'EnableLoopback.exe', 'manifest.json'):
+                if name != missing_runtime:
+                    (bundle / name).write_bytes(b'fixture')
+            dist = root / 'dist'
+            dist.mkdir()
+            if installer_bytes is not None:
+                (dist / 'FlClash-dev-0.9.4-windows-amd64-setup.exe').write_bytes(installer_bytes)
+            if extra_zip:
+                (dist / 'FlClash-dev-0.9.4-windows-amd64-portable.zip').write_bytes(b'PK')
+            return subprocess.run(['bash', '-euo', 'pipefail', '-c', script],
+                                  cwd=root, capture_output=True, text=True)
+
+    def test_valid_windows_installer_passes_verification(self):
+        result = self.verify_windows_installer()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_invalid_windows_artifacts_fail_verification(self):
+        cases = (
+            {'channel': 'pre'},
+            {'missing_runtime': 'FlClashCore.exe'},
+            {'missing_runtime': 'FlClashHelperService.exe'},
+            {'missing_runtime': 'rust_api.dll'},
+            {'extra_zip': True},
+            {'installer_bytes': None},
+            {'installer_bytes': b'PKwrongmagic'},
+        )
+        for kwargs in cases:
+            with self.subTest(**kwargs):
+                self.assertNotEqual(self.verify_windows_installer(**kwargs).returncode, 0)
+
+    def test_windows_rust_setup_follows_the_checked_out_toolchain(self):
+        for version in ('1.95.0', '1.99.0'):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                manifest = root / 'plugins/rust_api/rust/rust-toolchain.toml'
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text(f'[toolchain]\nchannel = "{version}"\n')
+                rustup = root / 'rustup'
+                rustup.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+                rustup.chmod(0o755)
+                script = workflow_script('build-special-android.yml', 'Set up Rust for Windows')
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=root,
+                                        env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}'},
+                                        check=True, capture_output=True, text=True)
+                arguments = result.stdout.splitlines()
+                self.assertEqual(arguments[2], version)
+                self.assertEqual(arguments[arguments.index('--target') + 1], 'x86_64-pc-windows-msvc')
+
     def test_rust_setup_follows_the_checked_out_toolchain(self):
         for workflow in ('build-special-android.yml', 'sync-special.yml'):
             for version in ('1.95.0', '1.99.0'):
